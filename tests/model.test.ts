@@ -32,6 +32,15 @@ describe('MNIST digit model', () => {
     expect(eq.display).toBe('30');
   });
 
+  it('solves real tablet handwriting (hooked stroke ends, stray palm dots, far-away ink)', async () => {
+    const fx = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/real/tablet-18plus7.json'), 'utf8')) as {
+      strokes: { id: number; order: number; pts: [number, number][] }[];
+    };
+    const strokes = fx.strokes.map((s) => ({ id: s.id, order: s.order, pts: s.pts.map(([x, y]) => ({ x, y })) }));
+    const eqs = await recognizePage(strokes, classify);
+    expect(eqs.map((e) => `${e.expression}=${e.display}`)).toEqual(['18+7=25']);
+  });
+
   it('handles decimals and division', async () => {
     const [eq] = await recognizePage(writeLine('7.5÷2='), classify);
     expect(eq.expression).toBe('7.5÷2');

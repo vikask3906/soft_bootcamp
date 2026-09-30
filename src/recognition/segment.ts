@@ -144,7 +144,7 @@ function buildLine(items: Item[], lineHeight: number): Line {
   const isDotItem = (i: Item) => Math.max(bboxWidth(i.b), bboxHeight(i.b)) <= dotSize;
   const isBar = (i: Item) => {
     const f = strokeFeatures(i.s.pts);
-    return f.straightness > 0.85 && f.w > 1.8 * f.h;
+    return (f.straightness > 0.85 && f.w > 1.8 * f.h) || f.w > 3.5 * Math.max(f.h, 1);
   };
 
   const syms: { items: Item[]; b: BBox }[] = [];

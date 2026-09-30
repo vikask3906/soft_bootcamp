@@ -39,16 +39,50 @@ interface StrokeFeatures {
   angle: number;
 }
 
+/**
+ * Drops the first and last `frac` of a stroke's path length. Real pens add
+ * small hooks where the nib lands and lifts; left in, they make a clearly
+ * straight bar look curved (measured on real tablet strokes: an "=" bar
+ * scored 0.58 straightness with hooks, ~0.97 without).
+ */
+export function trimHooks(pts: readonly XY[], frac = 0.12): readonly XY[] {
+  if (pts.length < 5) return pts;
+  const total = pathLength(pts);
+  if (total === 0) return pts;
+  const cut = total * frac;
+  let acc = 0;
+  let start = 0;
+  let end = pts.length - 1;
+  for (let i = 1; i < pts.length; i++) {
+    acc += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    if (acc >= cut) {
+      start = i - 1;
+      break;
+    }
+  }
+  acc = 0;
+  for (let i = pts.length - 1; i > 0; i--) {
+    acc += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    if (acc >= cut) {
+      end = i;
+      break;
+    }
+  }
+  return end - start >= 1 ? pts.slice(start, end + 1) : pts;
+}
+
 export function strokeFeatures(pts: readonly XY[]): StrokeFeatures {
   const b = bboxOfPoints(pts);
   const w = bboxWidth(b);
   const h = bboxHeight(b);
-  const a = pts[0];
-  const z = pts[pts.length - 1];
+  // Shape (straightness, direction) is measured without the landing/lifting hooks.
+  const core = trimHooks(pts);
+  const a = core[0];
+  const z = core[core.length - 1];
   const chord = Math.hypot(z.x - a.x, z.y - a.y);
-  const len = pathLength(pts);
+  const len = pathLength(core);
   let maxDev = 0;
-  for (const p of pts) maxDev = Math.max(maxDev, Math.sqrt(distToSegmentSq(p, a, z)));
+  for (const p of core) maxDev = Math.max(maxDev, Math.sqrt(distToSegmentSq(p, a, z)));
   const straightness = len === 0 ? 0 : Math.min(chord / len, 1 - maxDev / Math.max(chord, 1e-6) / 2);
   let angle = (Math.atan2(z.y - a.y, z.x - a.x) * 180) / Math.PI;
   if (angle < 0) angle += 180;
@@ -59,8 +93,12 @@ export function strokeFeatures(pts: readonly XY[]): StrokeFeatures {
 const isStraight = (f: StrokeFeatures) => f.straightness > 0.85;
 /** Angular distance from horizontal, in degrees (0..90). */
 const fromHorizontal = (f: StrokeFeatures) => Math.min(f.angle, 180 - f.angle);
-const isHorizontal = (f: StrokeFeatures) => isStraight(f) && fromHorizontal(f) < 25 && f.w > 1.8 * f.h;
-const isVertical = (f: StrokeFeatures) => isStraight(f) && fromHorizontal(f) > 60;
+// A very flat (or very thin) stroke is a bar even if its ends hook: nothing else
+// in the vocabulary is 3.5× wider than tall. Hooks can reach ~25% of a short bar.
+const isFlat = (f: StrokeFeatures) => f.w > 3.5 * Math.max(f.h, 1);
+const isThin = (f: StrokeFeatures) => f.h > 3.5 * Math.max(f.w, 1);
+const isHorizontal = (f: StrokeFeatures) => (isStraight(f) && fromHorizontal(f) < 25 && f.w > 1.8 * f.h) || isFlat(f);
+const isVertical = (f: StrokeFeatures) => (isStraight(f) && fromHorizontal(f) > 60) || isThin(f);
 const isDiagonal = (f: StrokeFeatures) => isStraight(f) && fromHorizontal(f) >= 20 && fromHorizontal(f) <= 70;
 const isDot = (f: StrokeFeatures, lineHeight: number) => f.size <= Math.max(0.2 * lineHeight, 4);
 
@@ -135,7 +173,8 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
     const bracket = classifyBracket(f);
     if (bracket) return bracket;
     // A single straight near-vertical bar is a "1"; MNIST handles slanted/serif ones.
-    if (isVertical(f) && f.h > 0.5 * lineHeight && fromHorizontal(f) > 75) return { symbol: '1', confidence: 0.9 };
+    // (Requires real straightness, not just thinness: a narrow "7" is thin too.)
+    if (isStraight(f) && f.h > 0.5 * lineHeight && fromHorizontal(f) > 75) return { symbol: '1', confidence: 0.9 };
     return null;
   }
 
