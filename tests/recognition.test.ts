@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MNIST_SIZE, rasterizeStrokes } from '../src/recognition/rasterize';
 import { IGNORE, recognizeDetailed, recognizePage, type DigitClassifier } from '../src/recognition/pipeline';
@@ -180,10 +182,12 @@ describe('free-writing rules (fixes F–K, from a real tablet page)', () => {
     expect(classifyOperator([seg(0, 0, 24, 0), seg(0, 9, 24, 9)], 30)?.symbol).toBe('=');
   });
 
-  it('O: a + whose bar has a big hook at one end is still +', () => {
-    // The real bar from test sheet 2 (hooks down-left at its start; bbox 7 px tall).
-    const hooked = [[4, 12], [1, 10], [0, 9], [2, 8], [9, 7], [11, 7], [15, 6], [16, 6], [17, 6], [16, 5], [15, 5]].map(([x, y]) => ({ x, y }));
-    expect(classifyOperator([hooked, seg(9, 0, 10, 17)], 27)?.symbol).toBe('+');
+  it('O: a + whose bar has a big hook at one end is still + (real strokes from test sheet 2)', () => {
+    const fx = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/sheets/tablet-sheet-v2.json'), 'utf8')) as {
+      strokes: { id: number; pts: [number, number][] }[];
+    };
+    const stroke = (id: number) => fx.strokes.find((x) => x.id === id)!.pts.map(([x, y]) => ({ x, y }));
+    expect(classifyOperator([stroke(430), stroke(431)], 27)?.symbol).toBe('+');
   });
 
   it('I: a × with one leg drawn twice is still ×', () => {
