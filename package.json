@@ -27,5 +27,8 @@
     "onnxruntime-web": "^1.30.0"
   },
   "private": true,
-  "type": "module"
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  }
 }
