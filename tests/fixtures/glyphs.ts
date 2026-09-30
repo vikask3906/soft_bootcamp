@@ -36,6 +36,8 @@ export const OPERATORS: Record<string, Glyph> = {
   '÷': [arc(50, 25, 3, 3, 0, 360, 8), line(20, 50, 80, 50), arc(50, 75, 3, 3, 0, 360, 8)],
   '=': [line(20, 38, 80, 38), line(20, 62, 80, 62)],
   '.': [arc(50, 95, 2.5, 2.5, 0, 360, 8)],
+  '(': [arc(80, 50, 45, 55, 235, 125)],
+  ')': [arc(20, 50, 45, 55, -55, 55)],
 };
 
 export const GLYPHS: Record<string, Glyph> = { ...DIGITS, ...OPERATORS };
@@ -56,7 +58,7 @@ export function writeLine(text: string, x = 20, y = 20, size = 60, startId = 1) 
     }
     const g = GLYPHS[ch];
     if (!g) throw new Error(`No glyph for ${ch}`);
-    const narrow = ch === '.' ? 0.3 : ch === '1' ? 0.5 : 1;
+    const narrow = ch === '.' ? 0.3 : ch === '1' || ch === '(' || ch === ')' ? 0.5 : 1;
     for (const poly of g) {
       strokes.push({
         id,

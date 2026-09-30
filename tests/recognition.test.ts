@@ -27,6 +27,22 @@ describe('operator shape recogniser', () => {
       expect(classifyOperator(scale(DIGITS[d]), 60)).toBeNull();
     }
   });
+  it('tells ( and ) apart, drawn in either direction', () => {
+    const reversed = (g: { x: number; y: number }[][]) => g.map((p) => [...p].reverse());
+    expect(classifyOperator(scale(OPERATORS['(']), 60)?.symbol).toBe('(');
+    expect(classifyOperator(scale(OPERATORS[')']), 60)?.symbol).toBe(')');
+    expect(classifyOperator(reversed(scale(OPERATORS['('])), 60)?.symbol).toBe('(');
+    expect(classifyOperator(reversed(scale(OPERATORS[')'])), 60)?.symbol).toBe(')');
+  });
+  it('does not mistake digits for brackets', () => {
+    for (const d of ['1', '2', '3', '7']) {
+      const s = classifyOperator(scale(DIGITS[d]), 60)?.symbol;
+      expect(s === '(' || s === ')').toBe(false);
+    }
+    // A narrow 7 (corner at the top) must not read as ")".
+    const narrow7 = DIGITS['7'].map((p) => p.map((q) => ({ x: q.x * 0.35, y: q.y * 0.6 })));
+    expect(classifyOperator(narrow7, 60)?.symbol).not.toBe(')');
+  });
   it('recognises a straight vertical bar as 1', () => {
     expect(classifyOperator(scale(DIGITS['1']), 60)?.symbol).toBe('1');
   });
@@ -94,6 +110,11 @@ describe('pipeline', () => {
     expect(eq.expression).toBe('18+43');
     expect(eq.display).toBe('61');
     expect(eq.result.kind).toBe('ok');
+  });
+  it('evaluates brackets end-to-end', async () => {
+    const [eq] = await recognizePage(writeLine('(2+3)×4='), mockDigits('234'));
+    expect(eq.expression).toBe('(2+3)×4');
+    expect(eq.display).toBe('20');
   });
   it('ignores lines without =', async () => {
     expect(await recognizePage(writeLine('18+4'), mockDigits('84'))).toEqual([]);

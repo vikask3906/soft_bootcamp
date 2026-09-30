@@ -69,7 +69,27 @@ export function tokenize(input: string): Token[] {
     }
     throw new SyntaxError_(`Unexpected symbol "${ch}"`);
   }
-  return tokens;
+  return insertImplicitMultiplication(tokens);
+}
+
+/**
+ * Handwritten maths often omits "×" next to brackets: 2(3+4), (1+2)(3+4),
+ * (2+3)4. Insert the multiplication wherever a value is directly followed by
+ * another value.
+ */
+function insertImplicitMultiplication(tokens: Token[]): Token[] {
+  const endsValue = (t: Token) => t.type === 'num' || (t.type === 'paren' && t.value === ')');
+  const startsValue = (t: Token) => t.type === 'num' || (t.type === 'paren' && t.value === '(');
+  const out: Token[] = [];
+  for (const t of tokens) {
+    const prev = out[out.length - 1];
+    // num-num never occurs (digits are merged), so this only fires around brackets.
+    if (prev && endsValue(prev) && startsValue(t) && !(prev.type === 'num' && t.type === 'num')) {
+      out.push({ type: 'op', value: '*' });
+    }
+    out.push(t);
+  }
+  return out;
 }
 
 class Parser {

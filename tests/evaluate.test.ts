@@ -38,6 +38,23 @@ describe('evaluate — precedence (BODMAS)', () => {
   });
 });
 
+describe('evaluate — brackets', () => {
+  it.each([
+    ['(2+3)×4', 20],
+    ['2×(3+4)', 14],
+    ['((1+2)×(3+4))', 21],
+    ['−(2+3)', -5],
+    ['10÷(4−2)', 5],
+    // implicit multiplication next to brackets
+    ['2(3+4)', 14],
+    ['(1+2)(3+4)', 21],
+    ['(2+3)4', 20],
+  ])('%s = %d', (expr, expected) => {
+    expect(value(expr)).toBe(expected);
+  });
+  it('rejects empty brackets', () => expect(evaluate('()').kind).toBe('error'));
+});
+
 describe('evaluate — numbers', () => {
   it('handles multi-digit integers', () => expect(value('1234+5678')).toBe(6912));
   it('handles decimals', () => expect(value('7.5÷2')).toBe(3.75));

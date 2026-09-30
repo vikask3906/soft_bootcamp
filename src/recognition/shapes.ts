@@ -18,7 +18,7 @@ import {
  * digits (see ARCHITECTURE.md §4).
  */
 
-export type ShapeSymbol = '+' | '−' | '×' | '÷' | '=' | '.' | '1';
+export type ShapeSymbol = '+' | '−' | '×' | '÷' | '=' | '.' | '1' | '(' | ')';
 
 export interface ShapeGuess {
   symbol: ShapeSymbol;
@@ -64,6 +64,38 @@ const isDiagonal = (f: StrokeFeatures) => isStraight(f) && fromHorizontal(f) >= 
 const isDot = (f: StrokeFeatures, lineHeight: number) => f.size <= Math.max(0.2 * lineHeight, 4);
 
 /**
+ * "(" and ")" are single, tall, narrow strokes whose ends line up vertically
+ * and whose middle bows to one side. The bow direction — measured as the
+ * signed distance of points from the top→bottom chord — tells them apart,
+ * and the bow size separates them from a straight "1" and from loopy digits.
+ */
+export function classifyBracket(f: StrokeFeatures): ShapeGuess | null {
+  if (f.h < 1e-6 || f.w > 0.6 * f.h || fromHorizontal(f) < 65) return null;
+  const [a, z] = f.pts[0].y <= f.pts[f.pts.length - 1].y ? [f.pts[0], f.pts[f.pts.length - 1]] : [f.pts[f.pts.length - 1], f.pts[0]];
+  const dx = z.x - a.x;
+  const dy = z.y - a.y;
+  const chord = Math.hypot(dx, dy);
+  if (chord < 0.7 * f.h) return null; // ends must span the stroke's height (rules out "0", "6", "9")
+  let left = 0;
+  let right = 0;
+  let leftY = 0;
+  let rightY = 0;
+  for (const p of f.pts) {
+    // Cross product of chord × (p − a); with y pointing down, positive = left of the chord.
+    const side = (dx * (p.y - a.y) - dy * (p.x - a.x)) / chord;
+    if (side > left) [left, leftY] = [side, p.y];
+    if (-side > right) [right, rightY] = [-side, p.y];
+  }
+  const bow = Math.max(left, right) / chord;
+  const oneSided = Math.min(left, right) < 0.35 * Math.max(left, right); // a C-curve, not an S
+  // A bracket bows most near its middle; a narrow "7" has its corner at the top.
+  const peak = ((left > right ? leftY : rightY) - a.y) / Math.max(dy, 1e-6);
+  if (bow < 0.08 || bow > 0.45 || !oneSided || peak < 0.25 || peak > 0.75) return null;
+  const confidence = Math.min(0.95, 0.7 + bow);
+  return { symbol: left > right ? '(' : ')', confidence };
+}
+
+/**
  * Classifies a symbol (1–3 strokes) as an operator, or returns null to hand it
  * to the digit model. `lineHeight` is the typical digit height on the line and
  * gives the recogniser a sense of scale (a dot is only a dot relative to text).
@@ -76,6 +108,9 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
     const [f] = fs;
     if (isDot(f, lineHeight)) return { symbol: '.', confidence: 0.9 };
     if (isHorizontal(f)) return { symbol: '−', confidence: 0.9 };
+    // Brackets are checked before "1": both are tall single strokes, a bracket just bows.
+    const bracket = classifyBracket(f);
+    if (bracket) return bracket;
     // A single straight near-vertical bar is a "1"; MNIST handles slanted/serif ones.
     if (isVertical(f) && f.h > 0.5 * lineHeight && fromHorizontal(f) > 75) return { symbol: '1', confidence: 0.9 };
     return null;
