@@ -1,0 +1,110 @@
+import type { EquationResult } from '../recognition/pipeline';
+
+export const ANSWER_FONT = 'Caveat';
+const WRITE_MS = 420;
+const LOW_CONFIDENCE = 0.6;
+
+interface Answer {
+  eq: EquationResult;
+  born: number;
+}
+
+/**
+ * Projects answers onto the overlay canvas next to each "=".
+ * Answers "write themselves" left-to-right (a clip reveal) when they appear
+ * or change; unchanged answers are left alone so editing elsewhere on the
+ * page never makes them flicker. The overlay only animates while needed.
+ */
+export class AnswerLayer {
+  private answers = new Map<string, Answer>();
+  private ctx: CanvasRenderingContext2D;
+  private raf = 0;
+  private dpr = 1;
+
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    private readonly onNewAnswer?: (eq: EquationResult) => void,
+  ) {
+    this.ctx = canvas.getContext('2d')!;
+  }
+
+  setDpr(dpr: number) {
+    this.dpr = dpr;
+    this.draw();
+  }
+
+  update(equations: EquationResult[]) {
+    const now = performance.now();
+    const next = new Map<string, Answer>();
+    for (const eq of equations) {
+      const prev = this.answers.get(eq.key);
+      const same = prev && prev.eq.display === eq.display;
+      // Keep the birth time for unchanged answers; still take the fresh position/confidence.
+      next.set(eq.key, { eq, born: same ? prev.born : now });
+      if (!same) this.onNewAnswer?.(eq);
+    }
+    this.answers = next;
+    this.draw();
+  }
+
+  get current(): EquationResult[] {
+    return [...this.answers.values()].map((a) => a.eq);
+  }
+
+  private draw = () => {
+    cancelAnimationFrame(this.raf);
+    const { ctx, canvas, dpr } = this;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const now = performance.now();
+    let animating = false;
+    for (const { eq, born } of this.answers.values()) {
+      const t = Math.min(1, (now - born) / WRITE_MS);
+      if (t < 1) animating = true;
+      this.drawAnswer(eq, easeOut(t));
+    }
+    if (animating) this.raf = requestAnimationFrame(this.draw);
+  };
+
+  private drawAnswer(eq: EquationResult, t: number) {
+    const { ctx } = this;
+    const size = Math.max(22, Math.min(eq.anchor.height * 1.05, 140));
+    const x = eq.anchor.x + size * 0.28;
+    const y = eq.anchor.y;
+    const kind = eq.result.kind;
+    const color = kind === 'ok' ? '#1f5fd1' : kind === 'undefined' ? '#b4432f' : '#9a8f7a';
+
+    ctx.save();
+    ctx.font = `600 ${size}px ${ANSWER_FONT}, "Segoe Print", "Bradley Hand", cursive`;
+    ctx.textBaseline = 'middle';
+    const width = ctx.measureText(eq.display).width;
+
+    // Clip-reveal from the left: the answer looks like it is being written.
+    ctx.beginPath();
+    ctx.rect(x - 4, y - size, (width + 8) * t, size * 2);
+    ctx.clip();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.35 + 0.65 * t;
+    ctx.fillText(eq.display, x, y + size * 0.04);
+
+    // Confidence cue: a dashed amber underline when the recogniser is unsure.
+    if (kind !== 'error' && eq.confidence < LOW_CONFIDENCE) {
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = '#d99a1e';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, y + size * 0.42);
+      ctx.lineTo(x + width, y + size * 0.42);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  dispose() {
+    cancelAnimationFrame(this.raf);
+  }
+}
+
+const easeOut = (t: number) => 1 - (1 - t) ** 3;

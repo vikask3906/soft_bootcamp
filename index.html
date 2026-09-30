@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="description" content="Handwritten math calculator that runs entirely on your device." />
+    <meta name="theme-color" content="#f7f3ea" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>CalcInk</title>
+  </head>
+  <body>
+    <main class="app">
+      <div id="paper" class="paper" aria-label="Handwriting canvas"></div>
+
+      <p id="hint" class="hint" aria-hidden="true">
+        Write an equation ending with <b>=</b><br />
+        <span>e.g. 18 + 4 × 3 =</span>
+      </p>
+
+      <nav class="toolbar" aria-label="Tools">
+        <span class="brand">Calc<span>Ink</span></span>
+        <div class="group" role="radiogroup" aria-label="Tool">
+          <button class="tool" data-tool="pen" aria-pressed="true" title="Pen (P)">
+            <svg viewBox="0 0 24 24"><path d="M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20z" /><path d="M14 7l3 3" /></svg>
+          </button>
+          <button class="tool" data-tool="eraser" aria-pressed="false" title="Stroke eraser (E)">
+            <svg viewBox="0 0 24 24"><path d="M7 20h11" /><path d="M5.5 14.5l8-8a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12 18H8.9a2 2 0 0 1-1.4-.6l-2-2a1 1 0 0 1 0-1.4z" /></svg>
+          </button>
+          <button class="tool" data-tool="pixel-eraser" aria-pressed="false" title="Pixel eraser (X)">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" stroke-dasharray="3 2.5" /><circle cx="12" cy="12" r="1.5" /></svg>
+          </button>
+        </div>
+        <div class="group" aria-label="Stroke width">
+          <button class="width" data-width="2" aria-pressed="false" title="Fine"><i style="--d: 4px"></i></button>
+          <button class="width" data-width="3" aria-pressed="true" title="Medium"><i style="--d: 7px"></i></button>
+          <button class="width" data-width="5" aria-pressed="false" title="Bold"><i style="--d: 10px"></i></button>
+        </div>
+        <div class="group">
+          <button id="undo" title="Undo (Ctrl+Z)" disabled>
+            <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+          </button>
+          <button id="redo" title="Redo (Ctrl+Shift+Z)" disabled>
+            <svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></svg>
+          </button>
+          <button id="clear" title="Clear page">
+            <svg viewBox="0 0 24 24"><path d="M4 7h16" /><path d="M10 11v6M14 11v6" /><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" /><path d="M9 7V4h6v3" /></svg>
+          </button>
+        </div>
+        <div class="group">
+          <button id="sound" aria-pressed="true" title="Sound">
+            <svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10H4z" /><path class="waves" d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11" /></svg>
+          </button>
+          <button id="panel-toggle" aria-pressed="false" title="Show recognised expressions">
+            <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7" /></svg>
+          </button>
+        </div>
+      </nav>
+
+      <aside id="panel" class="panel" hidden>
+        <h2>What CalcInk reads</h2>
+        <ul id="readings"></ul>
+        <p class="panel-empty">Nothing yet — finish a line with <b>=</b>.</p>
+      </aside>
+
+      <footer class="status" aria-live="polite">
+        <span id="status-dot" class="dot"></span>
+        <span id="status-text">Loading model…</span>
+        <span id="net" class="net"></span>
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
