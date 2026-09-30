@@ -161,8 +161,8 @@ function buildLine(items: Item[], lineHeight: number): Line {
       const wb = b1 - b0;
       const ratioNarrow = ov / Math.min(wa, wb);
       const ratioWide = ov / Math.max(wa, wb);
-      if (ratioNarrow < 0.5) continue;
       const adjacent = sym.items.some((x) => Math.abs(x.s.order - it.s.order) <= 2);
+      if (ratioNarrow < 0.5) continue;
       if (!adjacent && ratioWide < 0.5) continue;
       // Dots only join a symbol containing a bar (÷), and vice versa for bars
       // joining lone dots — keeps decimal points separate from digits.

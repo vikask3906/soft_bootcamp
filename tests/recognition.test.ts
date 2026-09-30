@@ -27,6 +27,25 @@ describe('operator shape recogniser', () => {
       expect(classifyOperator(scale(DIGITS[d]), 60)).toBeNull();
     }
   });
+  it('reads a + whose bars do not quite touch (real tablet handwriting)', () => {
+    const bar = Array.from({ length: 11 }, (_, i) => ({ x: 20 + i * 6, y: 50 }));
+    const stemAbove = Array.from({ length: 11 }, (_, i) => ({ x: 50, y: 18 + i * 2.8 })); // stops at y=46, bar at 50
+    expect(classifyOperator([stemAbove, bar], 60)?.symbol).toBe('+');
+    const stemShort = Array.from({ length: 11 }, (_, i) => ({ x: 50, y: 55 + i * 2.5 })); // starts just below the bar
+    expect(classifyOperator([bar, stemShort], 60)?.symbol).toBe('+');
+  });
+  it('reads an × whose strokes miss slightly', () => {
+    const a = Array.from({ length: 11 }, (_, i) => ({ x: 25 + i * 4.5, y: 25 + i * 4.5 }));
+    const b = Array.from({ length: 11 }, (_, i) => ({ x: 75 - i * 2, y: 25 + i * 2 })); // stops short of the centre
+    expect(classifyOperator([a, b], 60)?.symbol).toBe('×');
+  });
+  it('still reads a two-stroke 4 as a digit, not a +', () => {
+    expect(classifyOperator(scale(DIGITS['4']), 60)).toBeNull();
+  });
+  it('keeps "1−" as two symbols even when written close together', () => {
+    const [line] = segment(writeLine('1−2'));
+    expect(line.symbols).toHaveLength(3);
+  });
   it('tells ( and ) apart, drawn in either direction', () => {
     const reversed = (g: { x: number; y: number }[][]) => g.map((p) => [...p].reverse());
     expect(classifyOperator(scale(OPERATORS['(']), 60)?.symbol).toBe('(');

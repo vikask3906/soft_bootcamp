@@ -5,6 +5,7 @@ import {
   distToSegmentSq,
   pathLength,
   polylinesIntersect,
+  segmentsIntersect,
   type XY,
 } from '../ink/geometry';
 
@@ -62,6 +63,28 @@ const isHorizontal = (f: StrokeFeatures) => isStraight(f) && fromHorizontal(f) <
 const isVertical = (f: StrokeFeatures) => isStraight(f) && fromHorizontal(f) > 60;
 const isDiagonal = (f: StrokeFeatures) => isStraight(f) && fromHorizontal(f) >= 20 && fromHorizontal(f) <= 70;
 const isDot = (f: StrokeFeatures, lineHeight: number) => f.size <= Math.max(0.2 * lineHeight, 4);
+
+/**
+ * Whether two straight strokes would cross if each were extended by
+ * `extend` × its length at both ends. Catches "+" and "×" whose bars stop
+ * just short of each other, while a bar far off to the side (a "⊢" or "T"
+ * shape would need > 30% extension) still doesn't count.
+ */
+export function nearlyCross(a: StrokeFeatures, b: StrokeFeatures, extend: number): boolean {
+  const ext = (f: StrokeFeatures): [XY, XY] => {
+    const p = f.pts[0];
+    const q = f.pts[f.pts.length - 1];
+    const dx = (q.x - p.x) * extend;
+    const dy = (q.y - p.y) * extend;
+    return [
+      { x: p.x - dx, y: p.y - dy },
+      { x: q.x + dx, y: q.y + dy },
+    ];
+  };
+  const [a0, a1] = ext(a);
+  const [b0, b1] = ext(b);
+  return segmentsIntersect(a0, a1, b0, b1);
+}
 
 /**
  * "(" and ")" are single, tall, narrow strokes whose ends line up vertically
@@ -123,15 +146,18 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
       const gap = Math.abs(a.cy - b.cy);
       if (gap > 0.1 * Math.max(a.w, b.w)) return { symbol: '=', confidence: 0.95 };
     }
-    if (cross) {
+    // Real handwriting often leaves a tiny gap where the two bars should cross,
+    // so a near-miss (crossing once both bars are extended by 30%) also counts.
+    const touches = cross || nearlyCross(a, b, 0.3);
+    if (touches) {
       if ((isHorizontal(a) && isVertical(b)) || (isVertical(a) && isHorizontal(b))) {
-        return { symbol: '+', confidence: 0.92 };
+        return { symbol: '+', confidence: cross ? 0.92 : 0.85 };
       }
       if (isDiagonal(a) && isDiagonal(b)) {
         // Opposite slopes: one rising, one falling.
         const slopeA = a.angle < 90;
         const slopeB = b.angle < 90;
-        if (slopeA !== slopeB) return { symbol: '×', confidence: 0.92 };
+        if (slopeA !== slopeB) return { symbol: '×', confidence: cross ? 0.92 : 0.85 };
       }
     }
     return null;
