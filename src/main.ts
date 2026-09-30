@@ -6,7 +6,9 @@ import { InkCanvas, type Tool } from './ink/InkCanvas';
 import type { EquationResult } from './recognition/pipeline';
 import { ANSWER_FONT, AnswerLayer } from './ui/answers';
 import { playAnswerCue, playEraseCue, setSoundEnabled } from './ui/feedback';
-import { loadPage, savePage } from './ui/storage';
+import type { View } from './ink/viewport';
+import { loadPage, loadView, savePage, saveView } from './ui/storage';
+import { setupToolbar } from './ui/toolbar';
 import { RecognizerClient, type RecognizerStatus } from './worker/client';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
@@ -43,7 +45,24 @@ const ink = new InkCanvas(paper, {
   onResize(_w, _h, dpr) {
     answerLayer?.setDpr(dpr);
   },
+  onView(view) {
+    answerLayer?.setView(view);
+    syncPaper(view);
+    clearTimeout(viewTimer);
+    viewTimer = setTimeout(() => saveView(view), 300);
+  },
 });
+let viewTimer: ReturnType<typeof setTimeout> | undefined;
+
+const zoomLabel = $('#zoom-reset');
+/** Moves the CSS paper (ruled lines, margin) with the camera and updates the zoom label. */
+function syncPaper(view: View) {
+  const gap = 48 * view.scale;
+  paper.style.setProperty('--rule-gap', `${gap}px`);
+  paper.style.setProperty('--rule-y', `${((view.y % gap) + gap) % gap}px`);
+  paper.style.setProperty('--margin-x', `${view.x + 72 * view.scale}px`);
+  zoomLabel.textContent = `${Math.round(view.scale * 100)}%`;
+}
 
 answerLayer = new AnswerLayer(ink.overlay, (eq) => {
   // Don't chime for answers restored from the autosave on startup.
@@ -77,7 +96,8 @@ updateNet();
 
 function setTool(tool: Tool) {
   ink.tool = tool;
-  paper.classList.toggle('eraser', tool !== 'pen');
+  paper.classList.toggle('eraser', tool === 'eraser' || tool === 'pixel-eraser');
+  paper.classList.toggle('panning', tool === 'hand');
   document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.tool === tool));
   });
@@ -98,6 +118,10 @@ document.querySelectorAll<HTMLButtonElement>('[data-width]').forEach((b) => {
 undoBtn.addEventListener('click', () => ink.undo());
 redoBtn.addEventListener('click', () => ink.redo());
 $('#clear').addEventListener('click', () => ink.clear());
+$('#zoom-in').addEventListener('click', () => ink.zoomBy(1.25));
+$('#zoom-out').addEventListener('click', () => ink.zoomBy(1 / 1.25));
+zoomLabel.addEventListener('click', () => ink.resetView());
+setupToolbar($('#toolbar'), $('#grip'), $('#collapse'));
 
 const soundBtn = $('#sound');
 soundBtn.addEventListener('click', () => {
@@ -122,10 +146,20 @@ window.addEventListener('keydown', (e) => {
   } else if (mod && key === 'y') {
     e.preventDefault();
     ink.redo();
+  } else if (mod && (key === '=' || key === '+')) {
+    e.preventDefault();
+    ink.zoomBy(1.25);
+  } else if (mod && key === '-') {
+    e.preventDefault();
+    ink.zoomBy(1 / 1.25);
+  } else if (mod && key === '0') {
+    e.preventDefault();
+    ink.resetView();
   } else if (!mod && !e.altKey) {
     if (key === 'p') setTool('pen');
     else if (key === 'e') setTool('eraser');
     else if (key === 'x') setTool('pixel-eraser');
+    else if (key === 'h') setTool('hand');
   }
 });
 
@@ -192,6 +226,9 @@ if (import.meta.env.DEV) {
 
 const saved = loadPage();
 if (saved.length) ink.load(saved);
+const savedView = loadView();
+if (savedView) ink.setView(savedView);
+syncPaper(ink.currentView);
 
 // Canvas text doesn't wait for web fonts; redraw answers once the handwriting font is ready.
 document.fonts.load(`600 32px ${ANSWER_FONT}`).then(() => answerLayer?.update(answerLayer.current));

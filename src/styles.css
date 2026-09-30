@@ -43,12 +43,37 @@ body {
   user-select: none;
   -webkit-user-select: none;
   background-color: var(--paper);
-  /* Ruled notebook lines + a red margin, all CSS so the canvas stays ink-only. */
+  /*
+   * Ruled notebook lines + a red margin, all CSS so the canvas stays ink-only.
+   * --rule-gap / --rule-y / --margin-x are set from the camera so the paper
+   * pans and zooms together with the ink.
+   */
+  --rule-gap: 48px;
+  --rule-y: 0px;
+  --margin-x: 72px;
   background-image:
-    linear-gradient(90deg, transparent 71px, var(--margin) 71px, var(--margin) 73px, transparent 73px),
-    repeating-linear-gradient(180deg, transparent 0 47px, var(--rule) 47px 48px),
+    linear-gradient(90deg, transparent calc(var(--margin-x) - 1px), var(--margin) calc(var(--margin-x) - 1px), var(--margin) calc(var(--margin-x) + 1px), transparent calc(var(--margin-x) + 1px)),
+    linear-gradient(180deg, transparent calc(100% - 1px), var(--rule) calc(100% - 1px)),
     radial-gradient(ellipse at 30% 20%, rgba(255, 255, 255, 0.7), transparent 60%),
     radial-gradient(ellipse at 80% 90%, var(--paper-edge), transparent 55%);
+  background-size:
+    100% 100%,
+    100% var(--rule-gap),
+    100% 100%,
+    100% 100%;
+  background-position:
+    0 0,
+    0 var(--rule-y),
+    0 0,
+    0 0;
+  background-repeat: no-repeat, repeat, no-repeat, no-repeat;
+}
+
+.paper.panning {
+  cursor: grab;
+}
+.paper.panning:active {
+  cursor: grabbing;
 }
 
 .paper.eraser {
@@ -105,6 +130,62 @@ body {
   max-width: calc(100vw - 24px);
   overflow-x: auto;
   scrollbar-width: none;
+}
+
+/* Once dragged, the toolbar is positioned by JS (left/top) instead of centred. */
+.toolbar.placed {
+  transform: none;
+}
+.toolbar.dragging {
+  opacity: 0.92;
+  box-shadow: 0 14px 40px rgba(50, 40, 20, 0.22);
+}
+
+.grip {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 38px;
+  flex: none;
+  cursor: grab;
+  touch-action: none;
+  color: rgba(29, 39, 64, 0.35);
+}
+.grip:active {
+  cursor: grabbing;
+}
+.toolbar .grip svg {
+  width: 12px;
+  height: 20px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.toolbar.collapsed .group,
+.toolbar.collapsed .brand {
+  display: none;
+}
+.toolbar.collapsed .group.keep {
+  display: flex;
+  border-left: 0;
+  padding-left: 0;
+}
+.toolbar.collapsed .group.keep > :not(#collapse) {
+  display: none;
+}
+#collapse svg {
+  transition: transform 0.2s;
+}
+.toolbar.collapsed #collapse svg {
+  transform: rotate(180deg);
+}
+
+#zoom-reset {
+  width: auto;
+  min-width: 52px;
+  padding: 0 6px;
+  font: 600 12px var(--ui-font);
+  font-variant-numeric: tabular-nums;
 }
 
 .brand {
@@ -347,11 +428,6 @@ body {
     left: 50%;
     transform: translateX(-50%);
     white-space: nowrap;
-  }
-  .paper {
-    background-image:
-      repeating-linear-gradient(180deg, transparent 0 47px, var(--rule) 47px 48px),
-      radial-gradient(ellipse at 80% 90%, var(--paper-edge), transparent 55%);
   }
 }
 
