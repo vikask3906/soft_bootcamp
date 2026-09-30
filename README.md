@@ -124,8 +124,9 @@ Measured with `npm run bench` on real stylus recordings from an Android tablet
 | Sheet 2 (16 fresh equations, written freely)       | 152 / 153 (99 %) | 15 / 16         |
 
 The remaining errors are two digit misreads by the model (`3→2`, `5→4`) and a one-stroke cursive
-`×`; tap-to-correct fixes each in two taps. Four more real pages (free writing with erasing,
-retracing, stray pen touches and nested brackets) are regression tests in `tests/fixtures/real/`.
+`×`; tap-to-correct fixes each in two taps. Five more real pages (free writing with erasing,
+retracing, stray pen touches, nested brackets and a line written uphill at ~26°) are regression
+tests in `tests/fixtures/real/`.
 The benchmark fails the test run if accuracy on either sheet drops below 98 %.
 
 ## Tests
@@ -154,6 +155,21 @@ src/
 tests/                   unit, integration and benchmark tests + real handwriting fixtures
 public/models/           the pre-trained ONNX model
 ```
+
+## Deployment
+
+The app is a static site (`npm run build` → `dist/`), so any static host works.
+
+**GitHub Pages (automatic).** `.github/workflows/deploy.yml` runs the tests, builds and publishes
+on every push to `main`. One-time setup: repository **Settings → Pages → Source: GitHub Actions**.
+The workflow sets Vite's `base` to the repository's sub-path (`/<repo>/`) automatically; locally,
+`BASE=/<repo>/ npm run build` does the same.
+
+**Vercel / Netlify.** Import the repository — the Vite preset works as is (build `npm run build`,
+output `dist`, base `/`).
+
+**Continuous integration.** `.github/workflows/ci.yml` runs `npm ci`, all tests (including the
+handwriting benchmark) and a production build on every push and pull request.
 
 ## Known limitations
 
