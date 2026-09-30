@@ -132,6 +132,19 @@ export async function recognizeDetailed(
     });
   }
 
+  // K. A lone "." clearly ABOVE the digits is a stray pen touch, not a decimal
+  // point (those sit at mid-height or on the baseline): drop it. A user
+  // correction on it still wins, since corrections are applied below.
+  lines.forEach((line, li) => {
+    const mid = digitMidline(line.symbols, line.height);
+    if (mid === null) return;
+    recognized[li].forEach((rec, si) => {
+      if (rec?.symbol !== '.' || rec.source !== 'shape') return;
+      const b = line.symbols[si].bbox;
+      if ((b.minY + b.maxY) / 2 < mid - 0.3 * line.height) recognized[li][si] = { ...rec, symbol: IGNORE };
+    });
+  });
+
   // Apply user corrections, and drop marks the user chose to ignore.
   const rows = lines.map((line, li) =>
     line.symbols
@@ -190,6 +203,18 @@ export async function recognizeDetailed(
     solved: results.some((r) => rows[li].some((e) => e.rec.key === r.key)),
   }));
   return { equations: results, lines: readings };
+}
+
+/** Median vertical centre of the digit-sized symbols on a line (null if there are none). */
+function digitMidline(symbols: SymbolGroup[], lineHeight: number): number | null {
+  const cys = symbols
+    .filter((s) => {
+      const h = s.bbox.maxY - s.bbox.minY;
+      return h >= 0.6 * lineHeight && h <= 1.6 * lineHeight;
+    })
+    .map((s) => (s.bbox.minY + s.bbox.maxY) / 2)
+    .sort((a, b) => a - b);
+  return cys.length ? cys[Math.floor(cys.length / 2)] : null;
 }
 
 const toExpression = (syms: RecognizedSymbol[]) => syms.map((s) => TO_EXPR[s.symbol] ?? s.symbol).join('');
