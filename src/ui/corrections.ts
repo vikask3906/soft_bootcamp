@@ -120,7 +120,12 @@ export class CorrectionUI {
       ...eq.symbols.map((sym) => {
         const chip = el('button', `chip${sym.source === 'user' ? ' fixed' : ''}${sym.confidence < 0.6 ? ' unsure' : ''}`);
         chip.textContent = sym.symbol;
-        chip.title = sym.source === 'user' ? `You set this (was read as ${sym.recognizedAs})` : `Read as ${sym.symbol} — tap to fix`;
+        chip.title =
+          sym.source === 'user'
+            ? `You set this (was read as ${sym.recognizedAs})`
+            : sym.source === 'repair'
+              ? `Guessed from bracket balance (was read as ${sym.recognizedAs}) — tap to change`
+              : `Read as ${sym.symbol} — tap to fix`;
         const p = worldToScreen(view, { x: (sym.bbox.minX + sym.bbox.maxX) / 2, y: sym.bbox.maxY });
         chip.style.left = `${p.x}px`;
         chip.style.top = `${p.y + 6}px`;
@@ -149,13 +154,21 @@ export class CorrectionUI {
 
   private openPicker(sym: RecognizedSymbol, chip: HTMLElement) {
     this.pickerFor = sym.key;
-    const original = sym.source === 'user' ? sym.recognizedAs! : sym.symbol;
+    const original = sym.source === 'user' || sym.source === 'repair' ? sym.recognizedAs! : sym.symbol;
     const head = el('div', 'picker-head');
     head.textContent =
-      sym.source === 'user' ? `You set ${sym.symbol} · read as ${original}` : `Read as ${sym.symbol} · ${Math.round(sym.confidence * 100)}% sure`;
+      sym.source === 'user'
+        ? `You set ${sym.symbol} · read as ${original}`
+        : sym.source === 'repair'
+          ? `Guessed ${sym.symbol} so the brackets balance · read as ${original}`
+          : `Read as ${sym.symbol} · ${Math.round(sym.confidence * 100)}% sure`;
 
-    const suggestions = [...new Set([...(sym.source === 'user' ? [original] : []), ...sym.alternatives])].filter((s) => s !== sym.symbol).slice(0, 4);
-    const pick = (value: string) => () => this.setCorrection(sym.key, value === original ? null : value);
+    const suggestions = [...new Set([...(sym.source !== 'shape' && sym.source !== 'model' ? [original] : []), ...sym.alternatives])]
+      .filter((s) => s !== sym.symbol)
+      .slice(0, 4);
+    // Choosing the original reading of a user fix just removes the fix. For an automatic
+    // repair it is stored explicitly, which also stops the repair from being re-applied.
+    const pick = (value: string) => () => this.setCorrection(sym.key, value === original && sym.source === 'user' ? null : value);
 
     const sugRow = el('div', 'picker-row suggest');
     sugRow.append(...suggestions.map((s) => button(s, pick(s), 'sym sug')));

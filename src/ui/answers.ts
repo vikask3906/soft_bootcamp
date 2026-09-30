@@ -109,9 +109,16 @@ export class AnswerLayer {
     const color = kind === 'ok' ? '#1f5fd1' : kind === 'undefined' ? '#b4432f' : '#9a8f7a';
 
     ctx.save();
-    ctx.font = `600 ${size}px ${ANSWER_FONT}, "Segoe Print", "Bradley Hand", cursive`;
+    const font = (px: number) => `600 ${px}px ${ANSWER_FONT}, "Segoe Print", "Bradley Hand", cursive`;
     ctx.textBaseline = 'middle';
-    const width = ctx.measureText(eq.display).width;
+    // For errors, a short reason follows the "?" in smaller handwriting ("? missing )").
+    const reason = eq.result.kind === 'error' ? eq.result.message : '';
+    const reasonSize = size * 0.5;
+    ctx.font = font(reasonSize);
+    const reasonW = reason ? ctx.measureText(reason).width + size * 0.2 : 0;
+    ctx.font = font(size);
+    const mainW = ctx.measureText(eq.display).width;
+    const width = mainW + reasonW;
     this.rects.set(eq.key, { x, y: y - size * 0.5, w: width, h: size });
 
     if (this.highlighted === eq.key) {
@@ -129,6 +136,12 @@ export class AnswerLayer {
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.35 + 0.65 * t;
     ctx.fillText(eq.display, x, y + size * 0.04);
+    if (reason) {
+      ctx.font = font(reasonSize);
+      ctx.fillStyle = '#8a7f6a';
+      ctx.fillText(reason, x + mainW + size * 0.2, y + size * 0.06);
+      ctx.font = font(size);
+    }
 
     // Confidence cue: a dashed amber underline when the recogniser is unsure.
     if (kind !== 'error' && eq.confidence < LOW_CONFIDENCE) {
