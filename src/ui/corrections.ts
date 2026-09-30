@@ -218,15 +218,15 @@ export class CorrectionUI {
   private fixesInActive(): string[] {
     const eq = this.eq;
     if (!eq) return [];
-    const minX = Math.min(...eq.symbols.map((s) => s.bbox.minX));
-    const top = eq.anchor.y - eq.anchor.height;
-    const bottom = eq.anchor.y + eq.anchor.height;
+    // The area covered by the equation's symbols (works for slanted rows too), plus a margin.
+    const m = eq.anchor.height * 0.5;
+    const minX = Math.min(...eq.symbols.map((s) => s.bbox.minX)) - m;
+    const maxX = Math.max(eq.anchor.x, ...eq.symbols.map((s) => s.bbox.maxX)) + m;
+    const minY = Math.min(...eq.symbols.map((s) => s.bbox.minY)) - m;
+    const maxY = Math.max(...eq.symbols.map((s) => s.bbox.maxY)) + m;
     const byId = new Map(this.opts.getStrokes().map((s) => [s.id, s]));
     return Object.keys(this.corrections).filter((key) =>
-      key.split(',').some((id) => {
-        const s = byId.get(Number(id));
-        return s?.points.some((p) => p.x >= minX - eq.anchor.height && p.x <= eq.anchor.x && p.y >= top && p.y <= bottom);
-      }),
+      key.split(',').some((id) => byId.get(Number(id))?.points.some((p) => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY)),
     );
   }
 

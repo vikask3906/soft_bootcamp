@@ -23,7 +23,8 @@ export class AnswerLayer {
   private dpr = 1;
   private view: View = IDENTITY_VIEW;
   /** Where each answer was last drawn (world coords), for tap hit-testing. */
-  private rects = new Map<string, { x: number; y: number; w: number; h: number }>();
+  /** Rect in the answer's own frame (origin at the anchor, rotated by `angle`). */
+  private rects = new Map<string, { ox: number; oy: number; angle: number; x: number; y: number; w: number; h: number }>();
   /** Equation currently open in tap-to-correct (drawn with a highlight). */
   highlighted: string | null = null;
 
@@ -57,7 +58,14 @@ export class AnswerLayer {
   hitTest(p: { x: number; y: number }): EquationResult | null {
     const pad = 10 / this.view.scale;
     for (const [key, r] of this.rects) {
-      if (p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad) {
+      // Bring the point into the (possibly rotated) answer's frame.
+      const c = Math.cos(-r.angle);
+      const s = Math.sin(-r.angle);
+      const dx = p.x - r.ox;
+      const dy = p.y - r.oy;
+      const lx = dx * c - dy * s;
+      const ly = dx * s + dy * c;
+      if (lx >= r.x - pad && lx <= r.x + r.w + pad && ly >= r.y - pad && ly <= r.y + r.h + pad) {
         return this.answers.get(key)?.eq ?? null;
       }
     }
@@ -103,12 +111,15 @@ export class AnswerLayer {
   private drawAnswer(eq: EquationResult, t: number) {
     const { ctx } = this;
     const size = Math.max(22, Math.min(eq.anchor.height * 1.05, 140));
-    const x = eq.anchor.x + size * 0.28;
-    const y = eq.anchor.y;
+    // Drawn in the answer's own frame, rotated to follow a slanted row.
+    const x = size * 0.28;
+    const y = 0;
     const kind = eq.result.kind;
     const color = kind === 'ok' ? '#1f5fd1' : kind === 'undefined' ? '#b4432f' : '#9a8f7a';
 
     ctx.save();
+    ctx.translate(eq.anchor.x, eq.anchor.y);
+    ctx.rotate(eq.anchor.angle);
     const font = (px: number) => `600 ${px}px ${ANSWER_FONT}, "Segoe Print", "Bradley Hand", cursive`;
     ctx.textBaseline = 'middle';
     // For errors, a short reason follows the "?" in smaller handwriting ("? missing )").
@@ -119,7 +130,7 @@ export class AnswerLayer {
     ctx.font = font(size);
     const mainW = ctx.measureText(eq.display).width;
     const width = mainW + reasonW;
-    this.rects.set(eq.key, { x, y: y - size * 0.5, w: width, h: size });
+    this.rects.set(eq.key, { ox: eq.anchor.x, oy: eq.anchor.y, angle: eq.anchor.angle, x, y: y - size * 0.5, w: width, h: size });
 
     if (this.highlighted === eq.key) {
       // Soft marker behind the answer while it's open for correction.
