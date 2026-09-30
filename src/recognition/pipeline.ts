@@ -2,7 +2,7 @@ import type { BBox } from '../ink/types';
 import { evaluate, formatResult, type EvalResult } from '../math/evaluate';
 import { rasterizeStrokes } from './rasterize';
 import { segment, type RecStroke, type SymbolGroup } from './segment';
-import { classifyOperator } from './shapes';
+import { bracketMeasure, classifyOperator, MIN_BRACKET_BOW, strokeFeatures } from './shapes';
 
 export interface DigitPrediction {
   digit: number;
@@ -18,12 +18,13 @@ export interface RecognizedSymbol {
   symbol: string;
   confidence: number;
   bbox: BBox;
-  source: 'shape' | 'model' | 'user';
+  /** 'repair' = changed automatically by the bracket-balance safety net. */
+  source: 'shape' | 'model' | 'user' | 'repair';
   /** Stable identity of the symbol: its stroke ids. A correction is stored against it. */
   key: string;
   /** Likely alternatives, best first (model runner-ups, or common confusions for shapes). */
   alternatives: string[];
-  /** What the recogniser read before a user correction (only for source 'user'). */
+  /** What the recogniser read before a correction or repair (source 'user' / 'repair'). */
   recognizedAs?: string;
 }
 
@@ -138,8 +139,9 @@ export async function recognizeDetailed(
         const key = symbolKey(group);
         const rec = recognized[li][si] ?? { symbol: '?', confidence: 0, bbox: group.bbox, source: 'model' as const, key, alternatives: [] };
         const fix = corrections[key];
-        const final: RecognizedSymbol =
-          fix === undefined || fix === rec.symbol ? rec : { ...rec, symbol: fix, confidence: 1, source: 'user', recognizedAs: rec.symbol };
+        // Any stored correction is the user's decision — even one that confirms the
+        // reading — so the automatic bracket repair must never touch it.
+        const final: RecognizedSymbol = fix === undefined ? rec : { ...rec, symbol: fix, confidence: 1, source: 'user', recognizedAs: rec.symbol };
         return { group, rec: final };
       })
       .filter((e) => e.rec.symbol !== IGNORE),
@@ -153,11 +155,23 @@ export async function recognizeDetailed(
     let start = 0;
     syms.forEach((eq, k) => {
       if (eq.symbol !== '=') return;
-      const exprSyms = syms.slice(start, k);
+      let exprSyms = syms.slice(start, k);
+      const from = start;
       start = k + 1;
       if (exprSyms.length === 0 || !hasRoomForAnswer(syms, k, line.height)) return;
-      const expression = exprSyms.map((s) => TO_EXPR[s.symbol] ?? s.symbol).join('');
-      const result = evaluate(expression);
+      let expression = toExpression(exprSyms);
+      let result = evaluate(expression);
+      // Safety net: an error with unbalanced brackets is most likely a "(" / ")"
+      // misread as "1" or vice versa. Try the most plausible swaps.
+      if (result.kind === 'error' && !bracketsBalanced(exprSyms)) {
+        const repaired = repairBrackets(row.slice(from, k));
+        if (repaired) {
+          repaired.forEach((e, i) => (row[from + i] = e));
+          exprSyms = repaired.map((e) => e.rec);
+          expression = toExpression(exprSyms);
+          result = evaluate(expression);
+        }
+      }
       results.push({
         key: row[k].rec.key,
         expression: exprSyms.map((s) => s.symbol).join(''),
@@ -176,6 +190,81 @@ export async function recognizeDetailed(
     solved: results.some((r) => rows[li].some((e) => e.rec.key === r.key)),
   }));
   return { equations: results, lines: readings };
+}
+
+const toExpression = (syms: RecognizedSymbol[]) => syms.map((s) => TO_EXPR[s.symbol] ?? s.symbol).join('');
+
+export function bracketsBalanced(syms: { symbol: string }[]): boolean {
+  let depth = 0;
+  for (const s of syms) {
+    if (s.symbol === '(') depth++;
+    else if (s.symbol === ')' && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+type Entry = { group: SymbolGroup; rec: RecognizedSymbol };
+type Swap = { index: number; to: string; plausibility: number };
+
+/**
+ * Bracket-balance repair. Candidates are symbols read as "1", "(" or ")"
+ * (never ones the user corrected). Each possible swap gets a plausibility from
+ * the stroke's bow: a "1" can become "(" only if it bows left, ")" only if it
+ * bows right, and the more it bows the likelier; a bracket becomes "1" the
+ * straighter it is. The most plausible single swap — or pair of swaps — that
+ * makes the expression balanced AND valid wins. Returns null if none does.
+ */
+function repairBrackets(entries: Entry[]): Entry[] | null {
+  const swaps: Swap[] = [];
+  entries.forEach((e, index) => {
+    const { symbol, source } = e.rec;
+    if (source === 'user' || !['1', '(', ')'].includes(symbol) || e.group.strokes.length !== 1) return;
+    const m = bracketMeasure(strokeFeatures(e.group.strokes[0].pts));
+    if (!m) return;
+    // Misreads only happen near the bracket/1 boundary (real "1"s bow ≤ 0.11,
+    // real brackets ≥ 0.16): a dead-straight "1" or a clearly curved bracket is
+    // never swapped. Plausibility peaks at the boundary.
+    const plausibility = 1 - Math.abs(m.bow - MIN_BRACKET_BOW) / MIN_BRACKET_BOW;
+    if (symbol === '1') {
+      if (m.bow < 0.05) return;
+      swaps.push({ index, to: m.left > m.right ? '(' : ')', plausibility }); // only the side it bows towards
+    } else if (m.bow <= 0.2) {
+      swaps.push({ index, to: '1', plausibility });
+    }
+  });
+  if (swaps.length === 0) return null;
+  swaps.sort((a, b) => b.plausibility - a.plausibility);
+  const top = swaps.slice(0, 8);
+
+  const tryApply = (chosen: Swap[]): Entry[] | null => {
+    if (new Set(chosen.map((s) => s.index)).size !== chosen.length) return null;
+    const next = entries.map((e, i) => {
+      const s = chosen.find((c) => c.index === i);
+      if (!s) return e;
+      return {
+        group: e.group,
+        rec: { ...e.rec, symbol: s.to, source: 'repair' as const, confidence: 0.5, recognizedAs: e.rec.symbol, alternatives: [e.rec.symbol, ...e.rec.alternatives] },
+      };
+    });
+    const syms = next.map((e) => e.rec);
+    return bracketsBalanced(syms) && evaluate(toExpression(syms)).kind !== 'error' ? next : null;
+  };
+
+  let best: { entries: Entry[]; score: number } | null = null;
+  for (const s of top) {
+    const r = tryApply([s]);
+    if (r && (!best || s.plausibility > best.score)) best = { entries: r, score: s.plausibility };
+  }
+  if (best) return best.entries;
+  for (let i = 0; i < top.length; i++) {
+    for (let j = i + 1; j < top.length; j++) {
+      const score = top[i].plausibility * top[j].plausibility;
+      if (best && score <= best.score) continue;
+      const r = tryApply([top[i], top[j]]);
+      if (r) best = { entries: r, score };
+    }
+  }
+  return best?.entries ?? null;
 }
 
 /**
