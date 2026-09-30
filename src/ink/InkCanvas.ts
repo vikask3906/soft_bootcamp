@@ -65,6 +65,9 @@ export class InkCanvas {
   private hover: XY | null = null;
   private penSeen = false;
   private penDown = false;
+  private penUpAt = -Infinity;
+  /** Touches classified as palm/accidental; ignored until lifted. */
+  private ignored = new Set<number>();
   private spaceHeld = false;
 
   // Pan / pinch gesture
@@ -257,8 +260,14 @@ export class InkCanvas {
     this.rect = { left: r.left, top: r.top };
 
     if (e.pointerType === 'touch') {
-      // Palm rejection: a hand resting on the screen while the pen writes is ignored.
-      if (this.penDown) return;
+      // Palm rejection: ignore touches while the pen is down or was just lifted
+      // (the hand is still resting), and any contact too big to be a fingertip.
+      const recentPen = performance.now() - this.penUpAt < 600;
+      const palmSized = (e.width || 0) > 45 || (e.height || 0) > 45;
+      if (this.penDown || recentPen || palmSized) {
+        this.ignored.add(e.pointerId);
+        return;
+      }
       this.positions.set(e.pointerId, this.toScreen(e));
       this.fingers.add(e.pointerId);
       this.capture(e);
@@ -277,11 +286,14 @@ export class InkCanvas {
       // No stylus on this device: a single finger draws.
     }
 
-    if (this.activePointer !== null) return;
     if (e.pointerType === 'pen') {
       this.penSeen = true;
       this.penDown = true;
+      // The palm usually lands a moment before the pen. Whatever it did — a pan,
+      // a pinch, or a finger stroke — was accidental: undo it and ignore those touches.
+      this.cancelTouchInput();
     }
+    if (this.activePointer !== null) return;
 
     const wantsPan = e.button === 1 || this.tool === 'hand' || (e.pointerType === 'mouse' && this.spaceHeld);
     if (wantsPan) {
@@ -315,6 +327,7 @@ export class InkCanvas {
   };
 
   private onMove = (e: PointerEvent) => {
+    if (this.ignored.has(e.pointerId)) return; // palm
     if (this.positions.has(e.pointerId)) this.positions.set(e.pointerId, this.toScreen(e));
     if (this.gesturePtrs.has(e.pointerId)) {
       this.updateGesture();
@@ -343,8 +356,28 @@ export class InkCanvas {
     this.requestFrame();
   };
 
+  private penLifted() {
+    this.penDown = false;
+    this.penUpAt = performance.now();
+  }
+
+  /** Called when the pen lands: rolls back and ignores everything fingers/palms were doing. */
+  private cancelTouchInput() {
+    const touchGesture = [...this.gesturePtrs].some((id) => this.fingers.has(id));
+    if (touchGesture && this.gesture) this.setView(this.gesture.view); // snap back the accidental pan
+    if (this.activePointer !== null && this.fingers.has(this.activePointer)) this.abortActive();
+    for (const id of this.fingers) {
+      this.ignored.add(id);
+      this.gesturePtrs.delete(id);
+      this.positions.delete(id);
+    }
+    this.fingers.clear();
+    if (this.gesturePtrs.size === 0) this.gesture = null;
+  }
+
   /** Forgets a lifted pointer; returns true if it was driving a pan/pinch. */
   private releasePointer(id: number): boolean {
+    this.ignored.delete(id);
     this.positions.delete(id);
     this.fingers.delete(id);
     if (!this.gesturePtrs.delete(id)) return false;
@@ -358,7 +391,7 @@ export class InkCanvas {
   }
 
   private onUp = (e: PointerEvent) => {
-    if (e.pointerType === 'pen') this.penDown = false;
+    if (e.pointerType === 'pen') this.penLifted();
     if (this.releasePointer(e.pointerId)) return;
     if (e.pointerId !== this.activePointer) return;
     this.activePointer = null;
@@ -380,7 +413,7 @@ export class InkCanvas {
   };
 
   private onCancel = (e: PointerEvent) => {
-    if (e.pointerType === 'pen') this.penDown = false;
+    if (e.pointerType === 'pen') this.penLifted();
     if (this.releasePointer(e.pointerId)) return;
     if (e.pointerId !== this.activePointer) return;
     this.abortActive();
