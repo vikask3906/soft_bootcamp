@@ -14,13 +14,39 @@ export type Token =
   | { type: 'op'; value: '+' | '-' | '*' | '/' }
   | { type: 'paren'; value: '(' | ')' };
 
+/**
+ * What kind of syntax problem was found. Used to show a short reason on the
+ * paper ("? missing )") and to decide when a bracket repair is worth trying.
+ */
+export type ErrorCode =
+  | 'empty'
+  | 'missing-close'
+  | 'extra-close'
+  | 'empty-brackets'
+  | 'double-operator'
+  | 'leading-operator'
+  | 'trailing-operator'
+  | 'missing-number'
+  | 'bad-number'
+  | 'unknown-symbol';
+
 export type EvalResult =
   | { kind: 'ok'; value: number }
   | { kind: 'undefined'; reason: string }
-  | { kind: 'error'; message: string };
+  /** `message` is short and human-readable, e.g. "missing )". */
+  | { kind: 'error'; message: string; code: ErrorCode };
 
-class SyntaxError_ extends Error {}
+class SyntaxError_ extends Error {
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 class UndefinedResult extends Error {}
+
+const OP_GLYPH: Record<string, string> = { '+': '+', '-': '−', '*': '×', '/': '÷' };
 
 /** Maps the handwriting vocabulary (and common ASCII aliases) to operators. */
 const OP_ALIASES: Record<string, '+' | '-' | '*' | '/'> = {
@@ -52,7 +78,7 @@ export function tokenize(input: string): Token[] {
         j++;
       }
       const raw = input.slice(i, j);
-      if (dots > 1 || raw === '.') throw new SyntaxError_(`Malformed number "${raw}"`);
+      if (dots > 1 || raw === '.') throw new SyntaxError_('bad-number', raw === '.' ? 'lone decimal point' : `bad number ${raw}`);
       tokens.push({ type: 'num', value: Number(raw), raw });
       i = j;
       continue;
@@ -67,7 +93,7 @@ export function tokenize(input: string): Token[] {
       i++;
       continue;
     }
-    throw new SyntaxError_(`Unexpected symbol "${ch}"`);
+    throw new SyntaxError_('unknown-symbol', `unknown symbol ${ch}`);
   }
   return insertImplicitMultiplication(tokens);
 }
@@ -97,9 +123,13 @@ class Parser {
   constructor(private readonly tokens: Token[]) {}
 
   parse(): number {
-    if (this.tokens.length === 0) throw new SyntaxError_('Empty expression');
+    if (this.tokens.length === 0) throw new SyntaxError_('empty', 'nothing before =');
     const v = this.expr();
-    if (this.pos < this.tokens.length) throw new SyntaxError_('Unexpected trailing input');
+    if (this.pos < this.tokens.length) {
+      const t = this.tokens[this.pos];
+      if (t.type === 'paren' && t.value === ')') throw new SyntaxError_('extra-close', 'extra )');
+      throw new SyntaxError_('missing-number', 'check symbols');
+    }
     return v;
   }
 
@@ -144,7 +174,12 @@ class Parser {
 
   private primary(): number {
     const t = this.peek();
-    if (!t) throw new SyntaxError_('Unexpected end of expression');
+    const prev = this.tokens[this.pos - 1];
+    if (!t) {
+      if (prev?.type === 'op') throw new SyntaxError_('trailing-operator', `nothing after ${OP_GLYPH[prev.value]}`);
+      if (prev?.type === 'paren' && prev.value === '(') throw new SyntaxError_('missing-close', 'missing )');
+      throw new SyntaxError_('missing-number', 'number missing');
+    }
     if (t.type === 'num') {
       this.pos++;
       return t.value;
@@ -153,11 +188,19 @@ class Parser {
       this.pos++;
       const v = this.expr();
       const close = this.peek();
-      if (!close || close.type !== 'paren' || close.value !== ')') throw new SyntaxError_('Missing ")"');
+      if (!close || close.type !== 'paren' || close.value !== ')') throw new SyntaxError_('missing-close', 'missing )');
       this.pos++;
       return v;
     }
-    throw new SyntaxError_('Expected a number');
+    // A number was expected but something else is here.
+    if (t.type === 'paren') {
+      if (prev?.type === 'paren' && prev.value === '(') throw new SyntaxError_('empty-brackets', 'empty ( )');
+      if (prev?.type === 'op') throw new SyntaxError_('missing-number', `nothing after ${OP_GLYPH[prev.value]}`);
+      throw new SyntaxError_('extra-close', 'extra )');
+    }
+    if (!prev) throw new SyntaxError_('leading-operator', `starts with ${OP_GLYPH[t.value]}`);
+    if (prev.type === 'paren' && prev.value === '(') throw new SyntaxError_('leading-operator', `( then ${OP_GLYPH[t.value]}`);
+    throw new SyntaxError_('double-operator', 'two operators');
   }
 }
 
@@ -169,8 +212,8 @@ export function evaluate(input: string): EvalResult {
     return { kind: 'ok', value };
   } catch (e) {
     if (e instanceof UndefinedResult) return { kind: 'undefined', reason: e.message };
-    if (e instanceof SyntaxError_) return { kind: 'error', message: e.message };
-    return { kind: 'error', message: 'Could not evaluate' };
+    if (e instanceof SyntaxError_) return { kind: 'error', message: e.message, code: e.code };
+    return { kind: 'error', message: 'check symbols', code: 'missing-number' };
   }
 }
 
