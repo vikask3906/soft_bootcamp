@@ -63,6 +63,16 @@ describe('MNIST digit model', () => {
     for (const want of fx.expected) expect(got).toContain(want);
   });
 
+  it('solves free tablet writing 2: slightly curved × leg, near-straight ( repaired by bracket balance', async () => {
+    const fx = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/real/tablet-free-writing-2.json'), 'utf8')) as {
+      expected: string[];
+      strokes: { id: number; order: number; pts: [number, number][] }[];
+    };
+    const strokes = fx.strokes.map((s) => ({ id: s.id, order: s.order, pts: s.pts.map(([x, y]) => ({ x, y })) }));
+    const got = (await recognizePage(strokes, classify)).map((e) => `${e.expression}=${e.display}`);
+    for (const want of fx.expected) expect(got).toContain(want);
+  });
+
   it('handles decimals and division', async () => {
     const [eq] = await recognizePage(writeLine('7.5÷2='), classify);
     expect(eq.expression).toBe('7.5÷2');

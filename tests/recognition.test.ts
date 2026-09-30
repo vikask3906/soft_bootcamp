@@ -156,6 +156,11 @@ describe('free-writing rules (fixes F–K, from a real tablet page)', () => {
     expect(classifyOperator([bar, seg(5, 0, 5.5, 16)], 22)?.symbol).toBe('+');
   });
 
+  it('a × whose crossing legs are slightly curved is still ×', () => {
+    const curved = Array.from({ length: 12 }, (_, i) => ({ x: 17 - (17 * i) / 11 + 3 * Math.sin((Math.PI * i) / 11), y: (22 * i) / 11 }));
+    expect(classifyOperator([seg(0, 2, 12, 20), curved], 29)?.symbol).toBe('×');
+  });
+
   it('I: a × with one leg drawn twice is still ×', () => {
     expect(classifyOperator([seg(0, 0, 10, 14), seg(12, 0, 0, 18), seg(0, 0, 16, 16)], 22)?.symbol).toBe('×');
   });
