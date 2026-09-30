@@ -43,13 +43,21 @@ describe.runIf(sheets.length > 0)('handwriting benchmark (real tablet sheets)', 
     it(`scores ${file}`, async () => {
       const fx = JSON.parse(readFileSync(resolve(SHEETS_DIR, file), 'utf8')) as {
         minAccuracy?: number;
+        /** Rows the writer actually wrote differently from the sheet (index → text), so scoring is fair. */
+        rowOverrides?: Record<string, string>;
         strokes: { id: number; order: number; pts: [number, number][] }[];
       };
+      const expectedRows = SHEET_V1.map((row, i) => fx.rowOverrides?.[String(i)] ?? row);
+      const expectedAnswers: Record<string, string> = { ...SHEET_V1_ANSWERS };
+      for (const [i, row] of Object.entries(fx.rowOverrides ?? {})) {
+        delete expectedAnswers[SHEET_V1[Number(i)]];
+        if (row.endsWith('=')) expectedAnswers[row] = (fx as { overrideAnswers?: Record<string, string> }).overrideAnswers?.[row] ?? '';
+      }
       const strokes = fx.strokes.map((s) => ({ id: s.id, order: s.order, pts: s.pts.map(([x, y]) => ({ x, y })) }));
       const { lines, equations } = await recognizeDetailed(strokes, classify, true);
       const read = lines.map((l) => l.text).filter((t) => t.replace(/[.]/g, '').length > 0 || t.length > 1);
-      const report = scoreSheet(SHEET_V1, read);
-      const answers = Object.entries(SHEET_V1_ANSWERS).map(([row, want]) => {
+      const report = scoreSheet(expectedRows, read);
+      const answers = Object.entries(expectedAnswers).map(([row, want]) => {
         const expr = row.replace(/=$/, '');
         const eq = equations.find((e) => e.expression === expr);
         return `  ${eq?.display === want ? '✓' : '✗'} ${row.padEnd(16)} want ${want.padEnd(9)} got ${eq ? eq.display : '(not read correctly)'}`;
