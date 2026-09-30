@@ -4,7 +4,7 @@ import * as ort from 'onnxruntime-web';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createDigitClassifier } from '../src/recognition/model';
 import { recognizeDetailed, type DigitClassifier } from '../src/recognition/pipeline';
-import { SHEET_V1, SHEET_V1_ANSWERS } from './benchmark/sheet';
+import { SHEETS } from './benchmark/sheet';
 import { alignRows, alignSymbols, formatReport, scoreSheet } from './benchmark/score';
 
 describe('benchmark scorer', () => {
@@ -19,7 +19,7 @@ describe('benchmark scorer', () => {
     expect(pairs.filter(([e, g]) => e !== null && g !== null).map(([e]) => e)).toEqual([0, 1, 2]);
   });
   it('scores a perfect sheet at 100%', () => {
-    const r = scoreSheet(SHEET_V1, SHEET_V1.map((s) => s.replace(/\s/g, '')));
+    const r = scoreSheet(SHEETS.v2.rows, SHEETS.v2.rows);
     expect(r.correctSymbols).toBe(r.totalSymbols);
   });
 });
@@ -43,14 +43,17 @@ describe.runIf(sheets.length > 0)('handwriting benchmark (real tablet sheets)', 
     it(`scores ${file}`, async () => {
       const fx = JSON.parse(readFileSync(resolve(SHEETS_DIR, file), 'utf8')) as {
         minAccuracy?: number;
+        /** Which test sheet this capture is (default v1). */
+        sheet?: keyof typeof SHEETS;
         /** Rows the writer actually wrote differently from the sheet (index → text), so scoring is fair. */
         rowOverrides?: Record<string, string>;
         strokes: { id: number; order: number; pts: [number, number][] }[];
       };
-      const expectedRows = SHEET_V1.map((row, i) => fx.rowOverrides?.[String(i)] ?? row);
-      const expectedAnswers: Record<string, string> = { ...SHEET_V1_ANSWERS };
+      const sheet = SHEETS[fx.sheet ?? 'v1'];
+      const expectedRows = sheet.rows.map((row, i) => fx.rowOverrides?.[String(i)] ?? row);
+      const expectedAnswers: Record<string, string> = { ...sheet.answers };
       for (const [i, row] of Object.entries(fx.rowOverrides ?? {})) {
-        delete expectedAnswers[SHEET_V1[Number(i)]];
+        delete expectedAnswers[sheet.rows[Number(i)]];
         if (row.endsWith('=')) expectedAnswers[row] = (fx as { overrideAnswers?: Record<string, string> }).overrideAnswers?.[row] ?? '';
       }
       const strokes = fx.strokes.map((s) => ({ id: s.id, order: s.order, pts: s.pts.map(([x, y]) => ({ x, y })) }));
