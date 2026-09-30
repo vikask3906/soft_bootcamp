@@ -335,6 +335,9 @@ body {
 .panel .bar i.low {
   background: #d99a1e;
 }
+.panel li.unsolved .expr {
+  color: var(--ink-soft);
+}
 .panel-empty {
   margin: 0;
   font-size: 13px;

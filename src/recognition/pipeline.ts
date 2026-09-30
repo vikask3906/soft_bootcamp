@@ -35,7 +35,28 @@ export interface EquationResult {
 /** Maps handwriting glyphs to the evaluator's input alphabet. */
 const TO_EXPR: Record<string, string> = { '−': '-', '×': '*', '÷': '/' };
 
+/** What was read on one line of the page — shown to the user even when it isn't a solvable equation. */
+export interface LineReading {
+  text: string;
+  /** Top of the line in world coordinates (for ordering). */
+  y: number;
+  solved: boolean;
+}
+
 export async function recognizePage(strokes: readonly RecStroke[], classifyDigits: DigitClassifier): Promise<EquationResult[]> {
+  return (await recognizeDetailed(strokes, classifyDigits)).equations;
+}
+
+/**
+ * Full recognition. With `readAllLines`, digits on lines without "=" are
+ * classified too, so the UI can show "18+7 — add = to solve" instead of
+ * silently doing nothing.
+ */
+export async function recognizeDetailed(
+  strokes: readonly RecStroke[],
+  classifyDigits: DigitClassifier,
+  readAllLines = false,
+): Promise<{ equations: EquationResult[]; lines: LineReading[] }> {
   const lines = segment(strokes);
 
   // Pass 1: geometric operators; collect everything else for one batched model call.
@@ -52,7 +73,7 @@ export async function recognizePage(strokes: readonly RecStroke[], classifyDigit
 
   // Only lines containing "=" can hold equations; skip model work for the rest.
   const isEquationLine = recognized.map((syms) => syms.some((s) => s?.symbol === '='));
-  const needed = pending.filter((p) => isEquationLine[p.line]);
+  const needed = readAllLines ? pending : pending.filter((p) => isEquationLine[p.line]);
   if (needed.length > 0) {
     const preds = await classifyDigits(needed.map((p) => p.tensor));
     needed.forEach((p, i) => {
@@ -88,7 +109,13 @@ export async function recognizePage(strokes: readonly RecStroke[], classifyDigit
       });
     });
   });
-  return results;
+
+  const readings: LineReading[] = lines.map((line, li) => ({
+    text: recognized[li].map((s) => s?.symbol ?? '?').join(''),
+    y: line.bbox.minY,
+    solved: results.some((r) => line.symbols.some((s) => s.strokes.map((x) => x.id).join(',') === r.key)),
+  }));
+  return { equations: results, lines: readings };
 }
 
 /**

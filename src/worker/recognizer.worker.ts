@@ -6,7 +6,7 @@
  */
 import * as ort from 'onnxruntime-web/wasm';
 import { createDigitClassifier } from '../recognition/model';
-import { recognizePage, type DigitClassifier } from '../recognition/pipeline';
+import { recognizeDetailed, type DigitClassifier } from '../recognition/pipeline';
 import type { RecStroke } from '../recognition/segment';
 import type { FromWorker, ToWorker, WireStroke } from './protocol';
 
@@ -51,8 +51,8 @@ async function pump() {
       queued = null;
       const t0 = performance.now();
       try {
-        const equations = await recognizePage(req.strokes.map(fromWire), classifier);
-        post({ type: 'result', requestId: req.requestId, equations, elapsedMs: performance.now() - t0 });
+        const { equations, lines } = await recognizeDetailed(req.strokes.map(fromWire), classifier, true);
+        post({ type: 'result', requestId: req.requestId, equations, lines, elapsedMs: performance.now() - t0 });
       } catch (err) {
         post({ type: 'error', requestId: req.requestId, message: String(err) });
       }

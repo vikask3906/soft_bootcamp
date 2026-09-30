@@ -28,9 +28,11 @@ function debugCapture(): Plugin {
           try {
             JSON.parse(body);
             mkdirSync('debug', { recursive: true });
-            const file = `debug/capture-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+            const auto = req.url?.includes('auto=1');
+            // Auto-mirroring overwrites one file; the manual button keeps a timestamped copy.
+            const file = auto ? 'debug/latest.json' : `debug/capture-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
             writeFileSync(file, body);
-            server.config.logger.info(`[calcink] saved ${file}`);
+            if (!auto) server.config.logger.info(`[calcink] saved ${file}`);
             res.end(JSON.stringify({ file }));
           } catch {
             res.statusCode = 400;

@@ -1,5 +1,5 @@
 import type { Stroke } from '../ink/types';
-import type { EquationResult } from '../recognition/pipeline';
+import type { EquationResult, LineReading } from '../recognition/pipeline';
 import type { FromWorker, ToWorker, WireStroke } from './protocol';
 
 export type RecognizerStatus = { state: 'loading' } | { state: 'ready'; loadMs: number } | { state: 'error'; message: string };
@@ -15,7 +15,7 @@ export class RecognizerClient {
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
-    private readonly onResult: (eqs: EquationResult[], elapsedMs: number) => void,
+    private readonly onResult: (eqs: EquationResult[], lines: LineReading[], elapsedMs: number) => void,
     private readonly onStatus: (s: RecognizerStatus) => void,
     private readonly debounceMs = 120,
   ) {
@@ -50,7 +50,7 @@ export class RecognizerClient {
         this.onStatus({ state: 'ready', loadMs: msg.loadMs });
         break;
       case 'result':
-        if (msg.requestId === this.latest) this.onResult(msg.equations, msg.elapsedMs);
+        if (msg.requestId === this.latest) this.onResult(msg.equations, msg.lines, msg.elapsedMs);
         break;
       case 'error':
         if (msg.requestId === undefined) this.onStatus({ state: 'error', message: msg.message });

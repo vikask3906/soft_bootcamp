@@ -3,7 +3,7 @@ import '@fontsource/caveat/latin-600.css';
 import '@fontsource/caveat/latin-700.css';
 import './styles.css';
 import { InkCanvas, type Tool } from './ink/InkCanvas';
-import type { EquationResult } from './recognition/pipeline';
+import type { EquationResult, LineReading } from './recognition/pipeline';
 import { ANSWER_FONT, AnswerLayer } from './ui/answers';
 import { playAnswerCue, playEraseCue, setSoundEnabled } from './ui/feedback';
 import type { View } from './ink/viewport';
@@ -70,10 +70,25 @@ answerLayer = new AnswerLayer(ink.overlay, (eq) => {
 });
 answerLayer.setDpr(ink.cssSize.dpr);
 
-function onEquations(eqs: EquationResult[]) {
+function onEquations(eqs: EquationResult[], lines: LineReading[]) {
   answerLayer?.update(eqs);
   firstResult = false;
-  renderReadings(eqs);
+  renderReadings(eqs, lines);
+  if (import.meta.env.DEV) autoCapture(lines);
+}
+
+// Dev only: quietly mirror the page to the laptop (debug/latest.json) so
+// recognition can be diagnosed on real tablet handwriting.
+let captureTimer: ReturnType<typeof setTimeout> | undefined;
+function autoCapture(lines: LineReading[]) {
+  clearTimeout(captureTimer);
+  captureTimer = setTimeout(() => {
+    void fetch('/__calcink/capture?auto=1', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userAgent: navigator.userAgent, viewport: { ...ink.cssSize }, view: ink.currentView, strokes: ink.all, lines }),
+    }).catch(() => {});
+  }, 1200);
 }
 
 // ---------------------------------------------------------------- status
@@ -165,9 +180,25 @@ window.addEventListener('keydown', (e) => {
 
 // ---------------------------------------------------------------- readings panel
 
-function renderReadings(eqs: EquationResult[]) {
+function renderReadings(eqs: EquationResult[], lines: LineReading[]) {
   const sorted = [...eqs].sort((a, b) => a.anchor.y - b.anchor.y);
+  // Lines that didn't produce an answer still show what was read, with a hint why.
+  const unsolved = lines
+    .filter((l) => !l.solved)
+    .map((l) => {
+      const li = document.createElement('li');
+      li.className = 'unsolved';
+      const expr = document.createElement('div');
+      expr.className = 'expr';
+      expr.textContent = l.text;
+      const why = document.createElement('div');
+      why.className = 'conf';
+      why.textContent = l.text.includes('=') ? 'Answer already written, or no room after =' : 'No = found — end the line with = to solve';
+      li.append(expr, why);
+      return li;
+    });
   readings.replaceChildren(
+    ...unsolved,
     ...sorted.map((eq) => {
       const li = document.createElement('li');
       const expr = document.createElement('div');
