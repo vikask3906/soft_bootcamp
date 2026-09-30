@@ -88,6 +88,7 @@ describe('formatting', () => {
   it('never shows -0', () => expect(formatNumber(-0)).toBe('0'));
   it('keeps integers clean', () => expect(formatNumber(30)).toBe('30'));
   it('uses exponent form for huge values', () => expect(formatNumber(1e20)).toBe('1e+20'));
+  it('shows negative answers with a typographic minus', () => expect(formatResult(evaluate('2−5'))).toBe('−3'));
   it('formats results by kind', () => {
     expect(formatResult(evaluate('9÷0'))).toBe('Undefined');
     expect(formatResult(evaluate('9÷'))).toBe('?');

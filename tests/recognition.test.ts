@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MNIST_SIZE, rasterizeStrokes } from '../src/recognition/rasterize';
-import { recognizePage, type DigitClassifier } from '../src/recognition/pipeline';
+import { IGNORE, recognizeDetailed, recognizePage, type DigitClassifier } from '../src/recognition/pipeline';
+import { softmaxArgmax } from '../src/recognition/model';
 import { estimateLineHeight, segment } from '../src/recognition/segment';
 import { classifyOperator } from '../src/recognition/shapes';
 import { DIGITS, OPERATORS, writeLine } from './fixtures/glyphs';
@@ -183,6 +184,17 @@ describe('segmentation', () => {
   });
 });
 
+describe('softmax', () => {
+  it('returns probabilities that sum to 1 and ranks runner-ups', () => {
+    const r = softmaxArgmax([0, 3, 1, 0, 0, 0, 0, 0, 2.5, 0]);
+    expect(r.digit).toBe(1);
+    expect(r.alternatives!.map((a) => a.digit)).toEqual([8, 2, 0]);
+    const total = r.confidence + r.alternatives!.reduce((s, a) => s + a.p, 0);
+    expect(total).toBeLessThan(1);
+    expect(r.confidence).toBeCloseTo(Math.exp(3) / [0, 3, 1, 0, 0, 0, 0, 0, 2.5, 0].reduce((s, z) => s + Math.exp(z), 0), 10);
+  });
+});
+
 describe('rasterizer (strokes → MNIST tensor)', () => {
   it('produces a 28×28 tensor in [0, 1]', () => {
     const t = rasterizeStrokes(DIGITS['8']);
@@ -209,6 +221,42 @@ describe('rasterizer (strokes → MNIST tensor)', () => {
   });
   it('returns a blank tensor for no strokes', () => {
     expect(rasterizeStrokes([]).every((v) => v === 0)).toBe(true);
+  });
+});
+
+describe('tap-to-correct (corrections in the pipeline)', () => {
+  it('a corrected symbol replaces what was read, and the answer follows', async () => {
+    // Model misreads the 3 as a 2: "2.5×2=" → 5. The user fixes it to 3.
+    const strokes = writeLine('3.5×2=');
+    const misread: DigitClassifier = async (ts) => ts.map((_, i) => ({ digit: [2, 5, 2][i], confidence: 0.9, alternatives: [{ digit: 3, p: 0.08 }] }));
+    const [before] = await recognizePage(strokes, misread);
+    expect(before.display).toBe('5');
+    const three = before.symbols[0];
+    expect(three.alternatives[0]).toBe('3'); // model runner-up offered first
+    const [after] = await recognizePage(strokes, misread, { [three.key]: '3' });
+    expect(after.expression).toBe('3.5×2');
+    expect(after.display).toBe('7');
+    expect(after.symbols[0]).toMatchObject({ source: 'user', recognizedAs: '2', confidence: 1 });
+  });
+
+  it('"ignore this mark" drops a stray tap from the expression', async () => {
+    const strokes = [...writeLine('6÷2='), { id: 900, order: 900, pts: [{ x: 95, y: 49 }, { x: 96, y: 50 }] }];
+    const { lines } = await recognizeDetailed(strokes, mockDigits('62'), true);
+    const stray = lines[0].text; // contains an extra "." from the tap
+    expect(stray).toContain('.');
+    const [eq] = await recognizePage(strokes, mockDigits('62'), { '900': IGNORE });
+    expect(eq.expression).toBe('6÷2');
+    expect(eq.display).toBe('3');
+  });
+
+  it('a correction stops applying once its strokes change', async () => {
+    const strokes = writeLine('8+1=');
+    const [eq] = await recognizePage(strokes, mockDigits('8'));
+    const key = eq.symbols[0].key;
+    // Rewrite the 8 (new stroke ids): the old correction no longer matches.
+    const rewritten = strokes.map((s, i) => (i === 0 ? { ...s, id: 999 } : s));
+    const [again] = await recognizePage(rewritten, mockDigits('8'), { [key]: '6' });
+    expect(again.expression).toBe('8+1');
   });
 });
 

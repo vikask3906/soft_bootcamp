@@ -193,7 +193,8 @@ export function formatNumber(value: number): string {
 export function formatResult(r: EvalResult): string {
   switch (r.kind) {
     case 'ok':
-      return formatNumber(r.value);
+      // Typographic minus, matching the handwritten "−" rather than a hyphen.
+      return formatNumber(r.value).replace(/^-/, '−');
     case 'undefined':
       return 'Undefined';
     case 'error':
