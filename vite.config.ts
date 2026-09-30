@@ -1,6 +1,46 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vite';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+
+/**
+ * Dev-only: lets a tablet on the LAN upload its real strokes to debug/ on the
+ * laptop, so recognition can be tuned against real handwriting (and turned
+ * into regression tests). Never part of the production build.
+ */
+function debugCapture(): Plugin {
+  return {
+    name: 'calcink-debug-capture',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/__calcink/capture', (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        let body = '';
+        req.on('data', (chunk) => {
+          body += chunk;
+          if (body.length > 5_000_000) req.destroy();
+        });
+        req.on('end', () => {
+          try {
+            JSON.parse(body);
+            mkdirSync('debug', { recursive: true });
+            const file = `debug/capture-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+            writeFileSync(file, body);
+            server.config.logger.info(`[calcink] saved ${file}`);
+            res.end(JSON.stringify({ file }));
+          } catch {
+            res.statusCode = 400;
+            res.end();
+          }
+        });
+      });
+    },
+  };
+}
 
 // Set BASE=/repo-name/ when deploying to GitHub Pages; defaults to "/" (Vercel/Netlify).
 const base = process.env.BASE ?? '/';
@@ -12,6 +52,7 @@ export default defineConfig({
   optimizeDeps: { exclude: ['onnxruntime-web'] },
   build: { target: 'es2022' },
   plugins: [
+    debugCapture(),
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'auto',

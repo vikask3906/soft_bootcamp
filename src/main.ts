@@ -159,6 +159,35 @@ function renderReadings(eqs: EquationResult[]) {
   );
 }
 
+// ---------------------------------------------------------------- dev: capture real handwriting
+
+if (import.meta.env.DEV) {
+  const btn = document.createElement('button');
+  btn.className = 'capture';
+  btn.textContent = 'Send this page to laptop';
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const res = await fetch('/__calcink/capture', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          userAgent: navigator.userAgent,
+          viewport: { ...ink.cssSize },
+          strokes: ink.all,
+          readings: answerLayer?.current.map((eq) => ({ expression: eq.expression, display: eq.display, symbols: eq.symbols })),
+        }),
+      });
+      btn.textContent = res.ok ? 'Sent ✓ — send again?' : `Failed (${res.status})`;
+    } catch {
+      btn.textContent = 'Failed — is the laptop server running?';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  panel.append(btn);
+}
+
 // ---------------------------------------------------------------- startup
 
 const saved = loadPage();
