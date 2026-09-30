@@ -121,7 +121,8 @@ function looseCross(h: StrokeFeatures, v: StrokeFeatures, minBar: number): boole
   // an open "4" corner stroke keeps its height because the corner is mid-stroke.
   const coreH = bboxHeight(bboxOfPoints(trimHooks(h.pts, 0.2)));
   const hOk = h.straightness > 0.7 && fromHorizontal(h) < 30 && h.w > 1.8 * coreH && h.w >= minBar && coreH <= 0.3 * v.h;
-  const vOk = v.straightness > 0.7 && fromHorizontal(v) > 60 && v.h >= minBar && v.w <= 0.3 * h.w;
+  // A truly straight stem that leans has a wide box from its tilt, not its thickness.
+  const vOk = v.straightness > 0.7 && fromHorizontal(v) > 60 && v.h >= minBar && (v.straightness > 0.85 || v.w <= 0.3 * h.w);
   return hOk && vOk;
 }
 
@@ -184,7 +185,7 @@ export function classifyBracket(f: StrokeFeatures): ShapeGuess | null {
   if (f.h < 1e-6 || f.w > 0.8 * f.h || fromHorizontal(f) < 55) return null;
   const m = bracketMeasure(f);
   if (!m) return null;
-  const { bow, oneSided, peak, left, right } = m;
+  const { bow, oneSided, peak, left, right, twoBumps } = m;
   // Bow is measured across the stroke's own axis, so a leaning "1" isn't mistaken
   // for a bracket (a width/height ratio would be: a 13°-leaning "1" is 25% as wide as tall).
   // Widest point anywhere in the middle 70% (real brackets peaked at 22–23% of their
@@ -193,7 +194,7 @@ export function classifyBracket(f: StrokeFeatures): ShapeGuess | null {
   // Brackets are smooth arcs: on 29 real brackets straightness was ≥ 0.71, while
   // digits with bracket-like outlines (a "5", open "4"s, "7"s) scored ≤ 0.69.
   if (f.straightness < 0.65) return null;
-  if (bow < MIN_BRACKET_BOW || bow > 0.6 || !oneSided || peak < 0.15 || peak > 0.85) return null;
+  if (bow < MIN_BRACKET_BOW || bow > 0.6 || !oneSided || twoBumps || peak < 0.15 || peak > 0.85) return null;
   const confidence = Math.min(0.95, 0.7 + bow);
   return { symbol: left > right ? '(' : ')', confidence };
 }
@@ -226,7 +227,16 @@ export function bracketMeasure(f: StrokeFeatures) {
   const oneSided = Math.min(left, right) < 0.35 * Math.max(left, right); // a C-curve, not an S
   // A bracket bows most near its middle; a narrow "7" has its corner at the top.
   const peak = ((left > right ? leftY : rightY) - a.y) / Math.max(dy, 1e-6);
-  return { bow, oneSided, peak, left, right };
+  // Two bumps with a dip between them ("3") vs one arc (a bracket): walk the
+  // distance-from-chord profile on the bowing side and look for a valley
+  // between its first and last high points.
+  const sign = left > right ? 1 : -1;
+  const max = Math.max(left, right);
+  const prof = f.pts.map((p) => Math.max(0, (sign * (dx * (p.y - a.y) - dy * (p.x - a.x))) / chord));
+  const highs = prof.map((d, i) => (d >= 0.6 * max ? i : -1)).filter((i) => i >= 0);
+  const valley = highs.length >= 2 ? Math.min(...prof.slice(highs[0], highs[highs.length - 1] + 1)) : max;
+  const twoBumps = valley < 0.45 * max;
+  return { bow, oneSided, peak, left, right, twoBumps };
 }
 
 /**
