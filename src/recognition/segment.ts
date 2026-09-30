@@ -62,7 +62,15 @@ export function segment(strokes: readonly RecStroke[]): Line[] {
       const a = tall[i].b;
       const b = tall[j].b;
       const ov = rangeOverlap(a.minY, a.maxY, b.minY, b.maxY);
-      if (ov >= 0.4 * Math.min(bboxHeight(a), bboxHeight(b))) parent[find(i)] = find(j);
+      if (ov < 0.5 * Math.min(bboxHeight(a), bboxHeight(b))) continue;
+      // Only link horizontal neighbours: a row is a chain of nearby glyphs. Without
+      // this, one sloppy stroke overlapping two rows could merge the whole page.
+      const minH = Math.min(bboxHeight(a), bboxHeight(b));
+      const gap = Math.max(0, a.minX - b.maxX, b.minX - a.maxX);
+      if (gap > 2.5 * Math.max(minH, unit)) continue;
+      // Glyphs in one row have similar heights; a stroke 2.5× taller spans rows (a scribble, an arrow…).
+      if (Math.max(bboxHeight(a), bboxHeight(b)) > 2.5 * Math.max(1, minH)) continue;
+      parent[find(i)] = find(j);
     }
   }
   const bands = new Map<number, Item[]>();

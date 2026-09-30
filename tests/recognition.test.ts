@@ -70,6 +70,19 @@ describe('segmentation', () => {
     const lines = segment([...writeLine('1+2=', 20, 20), ...writeLine('3+4=', 700, 20, 60, 100)]);
     expect(lines).toHaveLength(2);
   });
+  it('keeps tightly packed rows apart (cramped page)', async () => {
+    // Rows only 6 px apart, as happens when the page fills up.
+    // (No "1"s here: a straight "1" is recognised by shape and would never reach the mock model.)
+    const strokes = [...writeLine('2+3=', 20, 20), ...writeLine('4+5=', 20, 86, 60, 100), ...writeLine('6+7=', 20, 152, 60, 200)];
+    const eqs = await recognizePage(strokes, mockDigits('234567'));
+    expect(eqs.map((e) => e.display)).toEqual(['5', '9', '13']);
+  });
+  it('a tall scribble spanning rows does not break the equations', async () => {
+    const scribble = { id: 999, order: 999, pts: [{ x: 400, y: 0 }, { x: 440, y: 120 }, { x: 410, y: 240 }] };
+    const strokes = [...writeLine('2+3=', 20, 20), ...writeLine('4+5=', 20, 140, 60, 100), scribble];
+    const eqs = await recognizePage(strokes, mockDigits('2345'));
+    expect(eqs.map((e) => e.display)).toEqual(['5', '9']);
+  });
   it('returns nothing for an empty page', () => {
     expect(segment([])).toEqual([]);
   });
