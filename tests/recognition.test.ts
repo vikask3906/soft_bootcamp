@@ -161,6 +161,31 @@ describe('free-writing rules (fixes F–K, from a real tablet page)', () => {
     expect(classifyOperator([seg(0, 2, 12, 20), curved], 29)?.symbol).toBe('×');
   });
 
+  it('L: a tilted ")" is still a bracket', () => {
+    // 37 px tall, leaning so its axis is ~62° from horizontal, bowing right.
+    const tilted = Array.from({ length: 16 }, (_, i) => {
+      const t = i / 15;
+      return { x: 18 * t + 9 * Math.sin(Math.PI * t), y: 37 * t };
+    });
+    expect(classifyOperator([tilted], 30)?.symbol).toBe(')');
+  });
+
+  it('M: a × with one steep leg (72°) is still ×', () => {
+    expect(classifyOperator([seg(0, 0, 18, 17), seg(12, -2, 5, 20)], 24)?.symbol).toBe('×');
+  });
+
+  it('N: a minus drawn over several times is one "−", but "=" stays "="', () => {
+    const back = [...seg(0, 1, 28, 0), ...seg(28, 0, 2, 2).slice(1)];
+    expect(classifyOperator([seg(3, 1, 20, 1), back], 30)?.symbol).toBe('−');
+    expect(classifyOperator([seg(0, 0, 24, 0), seg(0, 9, 24, 9)], 30)?.symbol).toBe('=');
+  });
+
+  it('O: a + whose bar has a big hook at one end is still +', () => {
+    // The real bar from test sheet 2 (hooks down-left at its start; bbox 7 px tall).
+    const hooked = [[4, 12], [1, 10], [0, 9], [2, 8], [9, 7], [11, 7], [15, 6], [16, 6], [17, 6], [16, 5], [15, 5]].map(([x, y]) => ({ x, y }));
+    expect(classifyOperator([hooked, seg(9, 0, 10, 17)], 27)?.symbol).toBe('+');
+  });
+
   it('I: a × with one leg drawn twice is still ×', () => {
     expect(classifyOperator([seg(0, 0, 10, 14), seg(12, 0, 0, 18), seg(0, 0, 16, 16)], 22)?.symbol).toBe('×');
   });
