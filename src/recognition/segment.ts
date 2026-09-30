@@ -1,4 +1,14 @@
-import { bboxHeight, bboxOfPoints, bboxWidth, pathLength, rangeOverlap, unionBBox, type XY } from '../ink/geometry';
+import {
+  bboxHeight,
+  bboxOfPoints,
+  bboxWidth,
+  distToPolyline,
+  pathLength,
+  polylinesIntersect,
+  rangeOverlap,
+  unionBBox,
+  type XY,
+} from '../ink/geometry';
 import type { BBox } from '../ink/types';
 import { BAR_MIN, DIVIDE_MARK_MAX, DOT_MAX, strokeFeatures } from './shapes';
 
@@ -129,6 +139,15 @@ export function segment(strokes: readonly RecStroke[]): Line[] {
   return lines;
 }
 
+/** Smallest distance between two polylines (0 if they cross). */
+function polylineGap(a: readonly XY[], b: readonly XY[]): number {
+  if (polylinesIntersect(a, b)) return 0;
+  let best = Infinity;
+  for (const p of a) best = Math.min(best, distToPolyline(p, b));
+  for (const p of b) best = Math.min(best, distToPolyline(p, a));
+  return best;
+}
+
 function paddedRange(lo: number, hi: number, minW: number): [number, number] {
   if (hi - lo >= minW) return [lo, hi];
   const c = (lo + hi) / 2;
@@ -208,8 +227,36 @@ function buildLine(items: Item[], lineHeight: number): Line {
     return null;
   };
 
+  /**
+   * Strokes that physically belong together, regardless of the overlap test:
+   *  F. they CROSS — whenever they were written (e.g. a "+" whose second bar was
+   *     drawn after erasing something) — as long as together they're no wider
+   *     than one symbol, so a sloppy stroke can't glue two digits;
+   *  J. they were drawn one right after the other and TOUCH — an open "4" whose
+   *     stem just meets the end of the first stroke — and together are narrower
+   *     than a symbol and not taller than a digit.
+   */
+  const physicalPartnerFor = (it: Item): Sym | null => {
+    if (isMark(it) || isDotItem(it)) return null;
+    for (let k = syms.length - 1; k >= Math.max(0, syms.length - 3); k--) {
+      const sym = syms[k];
+      if (sym.items.every((x) => isMark(x) || isDotItem(x))) continue;
+      const u = unionBBox(sym.b, it.b);
+      const crosses = bboxWidth(u) <= 1.2 * lineHeight && sym.items.some((x) => polylinesIntersect(x.s.pts, it.s.pts));
+      if (crosses) return sym;
+      const last = sym.items.reduce((a, b) => (a.s.order > b.s.order ? a : b));
+      const touches =
+        it.s.order === last.s.order + 1 &&
+        bboxWidth(u) <= 0.8 * lineHeight &&
+        bboxHeight(u) <= 1.3 * lineHeight &&
+        polylineGap(last.s.pts, it.s.pts) <= Math.max(1.5, 0.1 * lineHeight);
+      if (touches) return sym;
+    }
+    return null;
+  };
+
   for (const it of items) {
-    let target: Sym | null = divisionBarFor(it) ?? doubleTapFor(it);
+    let target: Sym | null = divisionBarFor(it) ?? doubleTapFor(it) ?? physicalPartnerFor(it);
     // Only look back a few symbols: merging is a local decision.
     for (let k = syms.length - 1; !target && k >= Math.max(0, syms.length - 3); k--) {
       const sym = syms[k];
