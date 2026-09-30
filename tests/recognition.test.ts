@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MNIST_SIZE, rasterizeStrokes } from '../src/recognition/rasterize';
 import { recognizePage, type DigitClassifier } from '../src/recognition/pipeline';
-import { segment } from '../src/recognition/segment';
+import { estimateLineHeight, segment } from '../src/recognition/segment';
 import { classifyOperator } from '../src/recognition/shapes';
 import { DIGITS, OPERATORS, writeLine } from './fixtures/glyphs';
 
@@ -68,6 +68,82 @@ describe('operator shape recogniser', () => {
   it('does not mistake a tall vertical bar for a dot', () => {
     expect(classifyOperator([[{ x: 0, y: 0 }, { x: 0, y: 3 }]], 60)?.symbol).toBe('.');
     expect(classifyOperator([[{ x: 0, y: 0 }, { x: 0, y: 50 }]], 60)?.symbol).not.toBe('.');
+  });
+});
+
+describe('real-handwriting size rules (fixes A–E, from the tablet benchmark)', () => {
+  const pts = (arr: [number, number][]) => arr.map(([x, y]) => ({ x, y }));
+  const vline = (x: number, y0: number, y1: number, lean = 0) =>
+    Array.from({ length: 12 }, (_, i) => ({ x: x + (lean * i) / 11, y: y0 + ((y1 - y0) * i) / 11 }));
+  const hline = (x0: number, x1: number, y: number) => Array.from({ length: 12 }, (_, i) => ({ x: x0 + ((x1 - x0) * i) / 11, y }));
+  const blob = (cx: number, cy: number, r: number) => Array.from({ length: 8 }, (_, i) => ({ x: cx + r * Math.cos(i), y: cy + r * Math.sin(i) }));
+
+  it('A: a leaning, slightly bowed "1" is not a bracket', () => {
+    // 30 px tall, leaning 6 px, bowing ~3 px in the middle (like the real one that read as "(").
+    const one = Array.from({ length: 15 }, (_, i) => {
+      const t = i / 14;
+      return { x: 6 * t - 3 * Math.sin(Math.PI * t), y: 30 * t };
+    });
+    expect(classifyOperator([one], 28)?.symbol).not.toBe('(');
+    expect(classifyOperator([one], 28)?.symbol).not.toBe(')');
+  });
+
+  it('B: ÷ whose dots are short dashes, or tapped several times', () => {
+    const bar = hline(0, 20, 20);
+    expect(classifyOperator([bar, vline(10, 8, 17), vline(10, 24, 33)], 26)?.symbol).toBe('÷'); // dashes
+    expect(classifyOperator([bar, blob(10, 12, 1.5), blob(11, 12, 1.5), blob(10, 28, 1.5)], 26)?.symbol).toBe('÷'); // double tap
+  });
+
+  it('B: ÷ marks join their bar even when drawn out of order', () => {
+    const s = (id: number, order: number, p: { x: number; y: number }[]) => ({ id, order, pts: p });
+    const strokes = [
+      s(1, 1, vline(0, 0, 26)), // "1"
+      s(2, 2, hline(20, 40, 13)), // bar
+      s(3, 3, vline(60, 0, 26)), // next "1"
+      s(4, 4, blob(30, 5, 1.5)), // dots added last
+      s(5, 5, blob(30, 22, 1.5)),
+    ];
+    const [line] = segment(strokes);
+    expect(line.symbols.map((x) => x.strokes.length)).toEqual([1, 3, 1]);
+  });
+
+  it('C: a stray tap next to a bar does not make "="', () => {
+    expect(classifyOperator([hline(0, 18, 10), pts([[3, 23], [4.8, 23.2]])], 26)?.symbol).not.toBe('=');
+  });
+
+  it('D: a 5 whose top bar was added at the end stays one digit', () => {
+    const body = pts([[2, 0], [0, 12], [8, 10], [14, 16], [12, 24], [2, 25]]); // 5 without its cap
+    const strokes = [
+      { id: 1, order: 1, pts: body },
+      { id: 2, order: 2, pts: vline(30, 0, 25) }, // "1" after it
+      { id: 3, order: 3, pts: hline(2, 16, 0.5) }, // the 5's cap, drawn last
+    ];
+    const [line] = segment(strokes);
+    expect(line.symbols).toHaveLength(2);
+    expect(line.symbols[0].strokes.map((x) => x.id).sort()).toEqual([1, 3]);
+  });
+
+  it('D: a real minus between digits is not swallowed as a cap', () => {
+    const [line] = segment(writeLine('5−6'));
+    expect(line.symbols).toHaveLength(3);
+  });
+
+  it('a double-tapped decimal point is one "."', () => {
+    expect(classifyOperator([blob(0, 0, 2), blob(2, -2, 1.5)], 26)?.symbol).toBe('.');
+  });
+});
+
+describe('line height estimate', () => {
+  const item = (w: number, h: number, ink: number) => ({
+    b: { minX: 0, minY: 0, maxX: w, maxY: h },
+    s: { id: 0, order: 0, pts: [{ x: 0, y: 0 }, { x: 0, y: ink }] },
+  });
+  it('is not inflated by tall brackets', () => {
+    const digits = Array.from({ length: 6 }, () => item(15, 25, 70));
+    expect(estimateLineHeight([...digits, item(20, 81, 90), item(18, 46, 60)])).toBe(25);
+  });
+  it('is not deflated by dash-shaped ÷ dots', () => {
+    expect(estimateLineHeight([item(13, 34, 90), item(1, 10, 10), item(6, 9, 10), item(8, 9, 10), item(18, 26, 80)])).toBeGreaterThanOrEqual(26);
   });
 });
 
