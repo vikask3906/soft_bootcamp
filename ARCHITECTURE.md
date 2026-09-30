@@ -348,6 +348,14 @@ the worker, so even the large page doesn't cost the UI thread a frame.
 is capped at 200 states. ONNX input/output tensors are disposed after every inference; answer
 animations stop their frame loop once finished.
 
+**Measured stability** (production build, Chromium): a scripted session of 97 cycles — write two
+equations (≈ 22 strokes), wait for both answers, clear — i.e. 2,134 strokes and 194 recognised
+equations, all correct. The main-thread JS heap stayed in a flat garbage-collection sawtooth
+(median 2.4 MB over the first 20 cycles, 2.6 MB over the last 20; peak 3.5 MB → 3.1 MB), and the
+DOM stayed at 109 elements with 3 canvases. The worker's heap can't be read by page scripts
+without cross-origin isolation, so it was not measured directly; it holds no state between
+requests apart from the loaded model.
+
 ---
 
 ## 8. 100 % on-device and offline
