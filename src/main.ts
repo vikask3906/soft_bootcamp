@@ -260,6 +260,8 @@ if (saved.length) ink.load(saved);
 const savedView = loadView();
 if (savedView) ink.setView(savedView);
 syncPaper(ink.currentView);
+// The hint starts hidden (so it never flashes over restored ink) and fades in on an empty page.
+hint.classList.toggle('hidden', ink.all.length > 0);
 
 // Canvas text doesn't wait for web fonts; redraw answers once the handwriting font is ready.
 document.fonts.load(`600 32px ${ANSWER_FONT}`).then(() => answerLayer?.update(answerLayer.current));
