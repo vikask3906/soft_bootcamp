@@ -5,6 +5,7 @@ import {
   distToSegmentSq,
   pathLength,
   polylinesIntersect,
+  rangeOverlap,
   segmentsIntersect,
   type XY,
 } from '../ink/geometry';
@@ -116,7 +117,10 @@ const isDot = (f: StrokeFeatures, lineHeight: number) => f.size <= Math.max(DOT_
 
 /** Loose "+" test for two strokes that really cross: h is a roughly horizontal bar, v a roughly vertical one. */
 function looseCross(h: StrokeFeatures, v: StrokeFeatures, minBar: number): boolean {
-  const hOk = h.straightness > 0.7 && fromHorizontal(h) < 30 && h.w > 1.8 * h.h && h.w >= minBar && h.h <= 0.3 * v.h;
+  // Thickness is judged without the end hooks (a real bar had a big hook at one end);
+  // an open "4" corner stroke keeps its height because the corner is mid-stroke.
+  const coreH = bboxHeight(bboxOfPoints(trimHooks(h.pts, 0.2)));
+  const hOk = h.straightness > 0.7 && fromHorizontal(h) < 30 && h.w > 1.8 * coreH && h.w >= minBar && coreH <= 0.3 * v.h;
   const vOk = v.straightness > 0.7 && fromHorizontal(v) > 60 && v.h >= minBar && v.w <= 0.3 * h.w;
   return hOk && vOk;
 }
@@ -174,7 +178,10 @@ export function nearlyCross(a: StrokeFeatures, b: StrokeFeatures, extend: number
  * and the bow size separates them from a straight "1" and from loopy digits.
  */
 export function classifyBracket(f: StrokeFeatures): ShapeGuess | null {
-  if (f.h < 1e-6 || f.w > 0.6 * f.h || fromHorizontal(f) < 65) return null;
+  // Axis may tilt down to 55° from horizontal (real brackets leaned to 61–63°).
+  // (A tilted bracket has a wide bounding box, so the box may be up to 0.8 as wide as tall;
+  // the bow and peak tests below measure shape along the stroke's own axis.)
+  if (f.h < 1e-6 || f.w > 0.8 * f.h || fromHorizontal(f) < 55) return null;
   const m = bracketMeasure(f);
   if (!m) return null;
   const { bow, oneSided, peak, left, right } = m;
@@ -261,6 +268,13 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
   if (fs.length === 2) {
     const [a, b] = fs;
     const cross = polylinesIntersect(a.pts, b.pts);
+    // A minus drawn over several times: two flat strokes on top of each other.
+    const ba = bboxOfPoints(a.pts);
+    const bb = bboxOfPoints(b.pts);
+    const stacked = cross || Math.abs(a.cy - b.cy) <= 0.1 * Math.max(a.w, b.w);
+    if (hBar(a) && hBar(b) && stacked && rangeOverlap(ba.minX, ba.maxX, bb.minX, bb.maxX) >= 0.5 * Math.min(a.w, b.w)) {
+      return { symbol: '−', confidence: 0.85 };
+    }
     if (hBar(a) && hBar(b) && !cross) {
       const gap = Math.abs(a.cy - b.cy);
       if (gap > 0.1 * Math.max(a.w, b.w)) return { symbol: '=', confidence: 0.95 };
@@ -279,7 +293,10 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
       // Same idea for "×": two legs that really cross, with opposite slopes, may be
       // slightly curved (a real leg measured 0.79). A stem is never diagonal, so an
       // open "4" can't pass this.
-      const looseDiag = (f: StrokeFeatures) => f.straightness > 0.7 && fromHorizontal(f) >= 20 && fromHorizontal(f) <= 70 && f.size >= minBar;
+      const looseDiag = (f: StrokeFeatures, max = 70) => f.straightness > 0.7 && fromHorizontal(f) >= 20 && fromHorizontal(f) <= max && f.size >= minBar;
+      // One leg may be steep (a real one was 72°) as long as the other is a clear diagonal.
+      const xLegs = (looseDiag(a) && looseDiag(b, 78)) || (looseDiag(b) && looseDiag(a, 78));
+      if (cross && xLegs && a.angle < 90 !== b.angle < 90) return { symbol: '×', confidence: 0.8 };
       if (cross && looseDiag(a) && looseDiag(b) && a.angle < 90 !== b.angle < 90) return { symbol: '×', confidence: 0.8 };
       if (diag(a) && diag(b)) {
         // Opposite slopes: one rising, one falling.
