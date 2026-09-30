@@ -61,15 +61,19 @@ export function segment(strokes: readonly RecStroke[]): Line[] {
     for (let j = i + 1; j < tall.length; j++) {
       const a = tall[i].b;
       const b = tall[j].b;
-      const ov = rangeOverlap(a.minY, a.maxY, b.minY, b.maxY);
-      if (ov < 0.5 * Math.min(bboxHeight(a), bboxHeight(b))) continue;
-      // Only link horizontal neighbours: a row is a chain of nearby glyphs. Without
-      // this, one sloppy stroke overlapping two rows could merge the whole page.
       const minH = Math.min(bboxHeight(a), bboxHeight(b));
+      const maxH = Math.max(bboxHeight(a), bboxHeight(b));
+      if (rangeOverlap(a.minY, a.maxY, b.minY, b.maxY) <= 0) continue;
+      // Same row ⇔ vertical centres line up. This accepts a big bracket around
+      // small digits (same centre, 3× taller) but rejects a scribble or a
+      // stroke spanning two rows (its centre falls between them).
+      const dCenter = Math.abs((a.minY + a.maxY) / 2 - (b.minY + b.maxY) / 2);
+      if (dCenter > 0.5 * Math.max(minH, 0.5 * unit)) continue;
+      // Only link horizontal neighbours: a row is a chain of nearby glyphs, so one
+      // sloppy stroke can't pull far-away ink into the row. Generous, because
+      // people leave wide spaces around operators (small strokes don't bridge here).
       const gap = Math.max(0, a.minX - b.maxX, b.minX - a.maxX);
-      if (gap > 2.5 * Math.max(minH, unit)) continue;
-      // Glyphs in one row have similar heights; a stroke 2.5× taller spans rows (a scribble, an arrow…).
-      if (Math.max(bboxHeight(a), bboxHeight(b)) > 2.5 * Math.max(1, minH)) continue;
+      if (gap > 3.5 * Math.max(maxH, unit)) continue;
       parent[find(i)] = find(j);
     }
   }
@@ -112,7 +116,7 @@ export function segment(strokes: readonly RecStroke[]): Line[] {
     let chunk: Item[] = [];
     let reach = -Infinity;
     for (const it of g) {
-      if (chunk.length > 0 && it.b.minX - reach > 2.5 * lineHeight) {
+      if (chunk.length > 0 && it.b.minX - reach > 3.5 * lineHeight) {
         lines.push(buildLine(chunk, lineHeight));
         chunk = [];
       }

@@ -205,7 +205,7 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
   if (fs.length === 3) {
     const line = fs.find(isHorizontal);
     if (line) {
-      const dots = fs.filter((f) => f !== line && f.size <= Math.max(0.45 * line.w, 6));
+      const dots = fs.filter((f) => f !== line && f.size <= Math.max(0.45 * line.w, 0.25 * lineHeight, 6));
       if (dots.length === 2) {
         const above = dots.some((d) => d.cy < line.cy);
         const below = dots.some((d) => d.cy > line.cy);

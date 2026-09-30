@@ -41,6 +41,16 @@ describe('MNIST digit model', () => {
     expect(eqs.map((e) => `${e.expression}=${e.display}`)).toEqual(['18+7=25']);
   });
 
+  it('solves real tablet handwriting with nested brackets and wide operator spacing', async () => {
+    const fx = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/real/tablet-nested-brackets.json'), 'utf8')) as {
+      expected: string[];
+      strokes: { id: number; order: number; pts: [number, number][] }[];
+    };
+    const strokes = fx.strokes.map((s) => ({ id: s.id, order: s.order, pts: s.pts.map(([x, y]) => ({ x, y })) }));
+    const eqs = await recognizePage(strokes, classify);
+    expect(eqs.map((e) => `${e.expression}=${e.display}`)).toEqual(fx.expected);
+  });
+
   it('handles decimals and division', async () => {
     const [eq] = await recognizePage(writeLine('7.5÷2='), classify);
     expect(eq.expression).toBe('7.5÷2');
