@@ -103,13 +103,33 @@ whose id is not the latest — so an answer for strokes that no longer exist is 
 ## 3. From pen to tensor: the recognition pipeline
 
 ```
-strokes ─► ① features ─► ② rows ─► ③ symbols ─► ④ classify ─► ⑤ expression ─► ⑥ evaluate
+strokes ─► ⓪ deskew ─► ① features ─► ② rows ─► ③ symbols ─► ④ classify ─► ⑤ expression ─► ⑥ evaluate
                                                   ├─ operators: geometric rules
                                                   └─ digits: rasterise 28×28 → CNN → softmax
 ```
 
 Everything operates on **vector strokes in world coordinates** — never on screen pixels — so the
 result is independent of zoom, pan and device pixel ratio.
+
+### ⓪ Deskewing slanted rows (`deskew.ts`)
+
+Rows can each have their own slope, and their extensions may cross even when their ink doesn't
+touch — so one page-wide angle would be wrong. Strokes are grouped by **when** they were written:
+
+1. **Bursts:** a stroke continues the previous stroke's burst if it was written next and starts
+   within 1.5 glyph heights of it. An equation is one burst, left to right, whatever its angle.
+2. **Slope per burst:** least-squares line through the centres of the digit-sized strokes,
+   refitted once without outliers (> 0.5 glyph heights off the line).
+3. **Late additions** (a digit added to an old row) join the burst whose fitted line they lie on
+   (within 0.6 glyph heights), so they are straightened with that row.
+4. Each burst is **rotated upright** about its centre. Rotation is rigid, so glyph shapes are
+   unchanged. Slopes under 3° are left alone; over 45° are not treated as rows.
+
+Recognition runs on the upright copy. The answer anchor and the tap-to-correct labels are mapped
+back to page coordinates, and the answer is drawn rotated by the row's slope.
+
+A straightened row also exposed a new confusion — a tall, narrow `3` passing the bracket test — so
+the bracket rule now also requires **one** bump: a `3` is two arcs with a dip between them.
 
 ### ① Stroke features (`shapes.ts: strokeFeatures`)
 
@@ -389,17 +409,15 @@ line-height estimate. Several regressions were caught **only** because earlier r
 tests — for example, loosening the bracket rule briefly turned a real `5` into `)`, which led to
 the smooth-arc requirement.
 
-The test suite (176 tests) runs the parser, geometry, ink, recognition rules, the real ONNX model
-on six real tablet recordings, and the benchmark, which fails if either sheet drops below 98 %.
+The test suite (183 tests) runs the parser, geometry, ink, recognition rules, the real ONNX model
+on seven real tablet recordings, and the benchmark, which fails if either sheet drops below 98 %.
 
 ---
 
 ## 11. Limitations and future work
 
-- **Slanted lines.** Rows tilted more than ≈ 10° are not grouped reliably (measured: 100 % up to
-  10°, failing from 15°). Planned: group strokes by writing time and proximity, fit a slope per
-  row by least squares, rotate each row upright before recognition, and rotate the answer
-  position back.
+- **Very steep or curved rows.** Rows are straightened by one slope each (tested −30° to +30°);
+  rows that curve strongly, or rows written out of order with no nearby ink, may still split.
 - **Model upgrade.** Evaluate a pre-trained math-symbol classifier (option B) on the same
   benchmark and adopt it where it measurably beats the rules.
 - **Vocabulary.** Vertical fractions, exponents, roots and variables (e.g. `x = 10`) are not

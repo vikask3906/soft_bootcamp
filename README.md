@@ -35,6 +35,8 @@ working in airplane mode.
 - Uncertain answers get a dashed amber underline (confidence indicator)
 - **Tap-to-correct:** tap an answer, tap a misread symbol, pick the right one (the model's
   runner-up guesses are offered first) — or "ignore this mark" for a stray tap
+- **Slanted writing:** each row is straightened by its own measured slope (tested from −30° to
+  +30°, including rows at different angles), and the answer follows the row's slope
 - Bracket-balance safety net: an unbalanced expression retries the likely `1` ↔ `(`/`)` misread
 - Soft audio / haptic cues, autosave, movable & collapsible toolbar, "what CalcInk reads" panel
 
@@ -72,7 +74,7 @@ or `localhost`, so test airplane mode on the deployed site or with `npm run prev
 | `npm run dev:lan`   | Dev server reachable from other devices on the network                    |
 | `npm run build`     | Type-check + production build into `dist/` (with offline service worker)  |
 | `npm run preview`   | Serve the production build locally                                        |
-| `npm test`          | Run all automated tests (176)                                             |
+| `npm test`          | Run all automated tests (183)                                             |
 | `npm run bench`     | Handwriting benchmark on real tablet recordings, with a per-symbol report |
 | `npm run typecheck` | TypeScript only                                                           |
 | `npm run format`    | Prettier                                                                  |
@@ -128,7 +130,7 @@ The benchmark fails the test run if accuracy on either sheet drops below 98 %.
 
 ## Tests
 
-`npm test` runs 176 tests (Vitest, in Node — no browser needed):
+`npm test` runs 183 tests (Vitest, in Node — no browser needed):
 
 - **Parser** — BODMAS, associativity, decimals, negatives, brackets, implicit ×, every error reason,
   division by zero, overflow, float formatting (`0.1 + 0.2 → 0.3`)
@@ -137,7 +139,7 @@ The benchmark fails the test run if accuracy on either sheet drops below 98 %.
 - **Ink** — undo/redo, stroke and pixel erasers, scratch-out detection
 - **Recognition** — every operator rule, stroke grouping, rasterisation into the model's input,
   corrections, bracket repair
-- **Real model on real handwriting** — the ONNX model on all digits and on six real tablet recordings
+- **Real model on real handwriting** — the ONNX model on all digits, on seven real tablet recordings (incl. a slanted line), and on rows from −30° to +30°
 
 ## Project structure
 
@@ -155,8 +157,6 @@ public/models/           the pre-trained ONNX model
 
 ## Known limitations
 
-- **Slanted lines:** rows written at more than about 10° from horizontal are not grouped
-  reliably yet (planned: per-row deskewing).
 - **Vocabulary:** no fractions written vertically, exponents, roots or variables.
 - **Digit model:** MNIST was trained on neat, centred digits; unusual shapes can be misread
   (tap-to-correct covers this).
