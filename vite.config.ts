@@ -8,6 +8,8 @@ const base = process.env.BASE ?? '/';
 export default defineConfig({
   base,
   worker: { format: 'es' },
+  // Pre-bundling would rewrite ORT's `new URL('*.wasm', import.meta.url)` and break the wasm lookup in dev.
+  optimizeDeps: { exclude: ['onnxruntime-web'] },
   build: { target: 'es2022' },
   plugins: [
     VitePWA({

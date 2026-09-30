@@ -1,5 +1,6 @@
-import '@fontsource/caveat/600.css';
-import '@fontsource/caveat/700.css';
+// Latin subset only: the answers are digits, and it keeps the offline cache small.
+import '@fontsource/caveat/latin-600.css';
+import '@fontsource/caveat/latin-700.css';
 import './styles.css';
 import { InkCanvas, type Tool } from './ink/InkCanvas';
 import type { EquationResult } from './recognition/pipeline';

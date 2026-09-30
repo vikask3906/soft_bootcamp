@@ -13,8 +13,10 @@ import type { FromWorker, ToWorker, WireStroke } from './protocol';
 declare const self: DedicatedWorkerGlobalScope;
 
 const base = new URL(import.meta.env.BASE_URL, self.location.origin).href;
-ort.env.wasm.numThreads = 1; // threads need cross-origin isolation, which static hosts rarely provide
-ort.env.wasm.wasmPaths = { wasm: `${base}ort/ort-wasm-simd-threaded.wasm` };
+// Threads need cross-origin isolation, which static hosts rarely provide.
+// The .wasm binary itself is referenced by the ORT bundle via `new URL(…, import.meta.url)`,
+// so Vite emits it as a hashed asset on our own origin and the service worker precaches it.
+ort.env.wasm.numThreads = 1;
 
 const post = (msg: FromWorker) => self.postMessage(msg);
 

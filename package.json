@@ -2,9 +2,8 @@
   "name": "calcink",
   "version": "1.0.0",
   "scripts": {
-    "postinstall": "node scripts/copy-ort.mjs",
-    "dev": "node scripts/copy-ort.mjs && vite",
-    "build": "node scripts/copy-ort.mjs && tsc && vite build",
+    "dev": "vite",
+    "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

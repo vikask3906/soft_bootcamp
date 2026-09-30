@@ -2,7 +2,6 @@ node_modules/
 dist/
 dev-dist/
 coverage/
-public/ort/
 *.log
 .DS_Store
 .vite/
