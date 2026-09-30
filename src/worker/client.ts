@@ -1,5 +1,5 @@
 import type { Stroke } from '../ink/types';
-import type { EquationResult, LineReading } from '../recognition/pipeline';
+import type { Corrections, EquationResult, LineReading } from '../recognition/pipeline';
 import type { FromWorker, ToWorker, WireStroke } from './protocol';
 
 export type RecognizerStatus = { state: 'loading' } | { state: 'ready'; loadMs: number } | { state: 'error'; message: string };
@@ -25,9 +25,18 @@ export class RecognizerClient {
     this.onStatus({ state: 'loading' });
   }
 
+  /** Supplies the current tap-to-correct fixes; sent with every request. */
+  corrections: () => Corrections = () => ({});
+
   schedule(strokes: readonly Stroke[]) {
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.send(strokes), this.debounceMs);
+  }
+
+  /** Recognise right away (after a correction, where waiting would feel laggy). */
+  now(strokes: readonly Stroke[]) {
+    clearTimeout(this.timer);
+    this.send(strokes);
   }
 
   private send(strokes: readonly Stroke[]) {
@@ -39,7 +48,7 @@ export class RecognizerClient {
       });
       return { id: s.id, order: s.order, xy };
     });
-    const msg: ToWorker = { type: 'recognize', requestId: ++this.latest, strokes: wire };
+    const msg: ToWorker = { type: 'recognize', requestId: ++this.latest, strokes: wire, corrections: this.corrections() };
     // Transfer the buffers instead of copying them.
     this.worker.postMessage(msg, wire.map((w) => w.xy.buffer));
   }

@@ -51,7 +51,7 @@ async function pump() {
       queued = null;
       const t0 = performance.now();
       try {
-        const { equations, lines } = await recognizeDetailed(req.strokes.map(fromWire), classifier, true);
+        const { equations, lines } = await recognizeDetailed(req.strokes.map(fromWire), classifier, true, req.corrections);
         post({ type: 'result', requestId: req.requestId, equations, lines, elapsedMs: performance.now() - t0 });
       } catch (err) {
         post({ type: 'error', requestId: req.requestId, message: String(err) });

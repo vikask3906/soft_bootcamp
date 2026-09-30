@@ -1,4 +1,4 @@
-import type { EquationResult, LineReading } from '../recognition/pipeline';
+import type { Corrections, EquationResult, LineReading } from '../recognition/pipeline';
 
 /** Stroke as sent to the worker: flat [x0, y0, x1, y1, …] to keep messages compact. */
 export interface WireStroke {
@@ -7,7 +7,7 @@ export interface WireStroke {
   xy: Float32Array;
 }
 
-export type ToWorker = { type: 'recognize'; requestId: number; strokes: WireStroke[] };
+export type ToWorker = { type: 'recognize'; requestId: number; strokes: WireStroke[]; corrections: Corrections };
 
 export type FromWorker =
   | { type: 'ready'; backend: string; loadMs: number }

@@ -33,16 +33,20 @@ export async function createDigitClassifier(ort: typeof Ort, model: ArrayBuffer 
   };
 }
 
+/**
+ * Softmax over the 10 logits: p(i) = e^(z_i) / Σ_j e^(z_j), computed with the
+ * max subtracted first for numerical stability. Returns the winner plus the
+ * runner-up digits (used as suggestions in tap-to-correct).
+ */
 export function softmaxArgmax(logits: ArrayLike<number>): DigitPrediction {
   let max = -Infinity;
-  let arg = 0;
-  for (let i = 0; i < logits.length; i++) {
-    if (logits[i] > max) {
-      max = logits[i];
-      arg = i;
-    }
-  }
+  for (let i = 0; i < logits.length; i++) if (logits[i] > max) max = logits[i];
   let sum = 0;
-  for (let i = 0; i < logits.length; i++) sum += Math.exp(logits[i] - max);
-  return { digit: arg, confidence: 1 / sum };
+  const exps: number[] = [];
+  for (let i = 0; i < logits.length; i++) {
+    exps.push(Math.exp(logits[i] - max));
+    sum += exps[i];
+  }
+  const ranked = exps.map((e, digit) => ({ digit, p: e / sum })).sort((a, b) => b.p - a.p);
+  return { digit: ranked[0].digit, confidence: ranked[0].p, alternatives: ranked.slice(1, 4) };
 }
