@@ -55,6 +55,26 @@ describe('evaluate — brackets', () => {
   it('rejects empty brackets', () => expect(evaluate('()').kind).toBe('error'));
 });
 
+describe('evaluate — error reasons shown on the paper', () => {
+  it.each([
+    ['(1+2', 'missing-close', 'missing )'],
+    ['((1+2)', 'missing-close', 'missing )'],
+    ['1+2)', 'extra-close', 'extra )'],
+    [')1+2(', 'extra-close', 'extra )'],
+    ['()', 'empty-brackets', 'empty ( )'],
+    ['3××3', 'double-operator', 'two operators'],
+    ['3+', 'trailing-operator', 'nothing after +'],
+    ['4÷', 'trailing-operator', 'nothing after ÷'],
+    ['×3', 'leading-operator', 'starts with ×'],
+    ['(×3)', 'leading-operator', '( then ×'],
+    ['(3+)', 'missing-number', 'nothing after +'],
+    ['1.2.3+1', 'bad-number', 'bad number 1.2.3'],
+    ['', 'empty', 'nothing before ='],
+  ])('%s → %s', (expr, code, message) => {
+    expect(evaluate(expr)).toEqual({ kind: 'error', code, message });
+  });
+});
+
 describe('evaluate — numbers', () => {
   it('handles multi-digit integers', () => expect(value('1234+5678')).toBe(6912));
   it('handles decimals', () => expect(value('7.5÷2')).toBe(3.75));

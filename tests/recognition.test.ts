@@ -224,6 +224,61 @@ describe('rasterizer (strokes → MNIST tensor)', () => {
   });
 });
 
+describe('safety net: bracket-balance repair', () => {
+  // A single stroke 60 px tall at x, bowing sideways by `bow` × its height
+  // (negative = bows left like "(", positive = bows right like ")").
+  const bowed = (id: number, x: number, bow: number) => ({
+    id,
+    order: id,
+    pts: Array.from({ length: 16 }, (_, i) => {
+      const t = i / 15;
+      return { x: x + bow * 60 * Math.sin(Math.PI * t), y: 20 + 60 * t };
+    }),
+  });
+  const shift = (strokes: ReturnType<typeof writeLine>, from: number) => strokes.map((s) => ({ ...s, id: s.id + from, order: s.order + from }));
+
+  it('a "(" that was really a "1" is swapped back when brackets do not balance', async () => {
+    // "(" with a borderline bow (0.14) + "+2=" → "(+2" is invalid → "1+2" = 3.
+    const strokes = [bowed(1, 40, -0.14), ...shift(writeLine('+2=', 60, 20), 10)];
+    const [eq] = await recognizePage(strokes, mockDigits('2'));
+    expect(eq.expression).toBe('1+2');
+    expect(eq.display).toBe('3');
+    expect(eq.symbols[0]).toMatchObject({ source: 'repair', recognizedAs: '(' });
+    expect(eq.confidence).toBeLessThan(0.6); // shown as unsure (amber) — never a silent change
+  });
+
+  it('a ")" misread as "1" is repaired to the side it bows towards', async () => {
+    // "(2+3" then a slightly right-bowed stroke read as "1" → "(2+31" → "(2+3)" = 5, not "12+3…".
+    const head = writeLine('(2+3', 20, 20);
+    const strokes = [...head, bowed(50, 300, 0.1), ...shift(writeLine('=', 330, 20), 60)];
+    const [eq] = await recognizePage(strokes, mockDigits('23'));
+    expect(eq.expression).toBe('(2+3)');
+    expect(eq.display).toBe('5');
+  });
+
+  it('never swaps a clearly curved bracket: a forgotten ")" shows "missing )"', async () => {
+    const [eq] = await recognizePage(writeLine('(2+3='), mockDigits('23'));
+    expect(eq.display).toBe('?');
+    expect(eq.result).toMatchObject({ kind: 'error', code: 'missing-close', message: 'missing )' });
+  });
+
+  it('leaves valid, balanced expressions alone', async () => {
+    const strokes = [...writeLine('12+3', 20, 20), bowed(50, 300, 0.1), ...shift(writeLine('=', 330, 20), 60)];
+    const [eq] = await recognizePage(strokes, mockDigits('23'));
+    expect(eq.expression).toBe('12+31');
+    expect(eq.symbols.every((s) => s.source !== 'repair')).toBe(true);
+  });
+
+  it('never overrides a symbol the user corrected', async () => {
+    const head = writeLine('(2+3', 20, 20);
+    const one = bowed(50, 300, 0.1);
+    const strokes = [...head, one, ...shift(writeLine('=', 330, 20), 60)];
+    const [eq] = await recognizePage(strokes, mockDigits('23'), { '50': '1' });
+    expect(eq.symbols.at(-1)).toMatchObject({ symbol: '1', source: 'user' });
+    expect(eq.result).toMatchObject({ kind: 'error', code: 'missing-close' });
+  });
+});
+
 describe('tap-to-correct (corrections in the pipeline)', () => {
   it('a corrected symbol replaces what was read, and the answer follows', async () => {
     // Model misreads the 3 as a 2: "2.5×2=" → 5. The user fixes it to 3.
