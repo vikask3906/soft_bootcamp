@@ -99,8 +99,20 @@ const isFlat = (f: StrokeFeatures) => f.w > 3.5 * Math.max(f.h, 1);
 const isThin = (f: StrokeFeatures) => f.h > 3.5 * Math.max(f.w, 1);
 const isHorizontal = (f: StrokeFeatures) => (isStraight(f) && fromHorizontal(f) < 25 && f.w > 1.8 * f.h) || isFlat(f);
 const isVertical = (f: StrokeFeatures) => (isStraight(f) && fromHorizontal(f) > 60) || isThin(f);
-const isDiagonal = (f: StrokeFeatures) => isStraight(f) && fromHorizontal(f) >= 20 && fromHorizontal(f) <= 70;
-const isDot = (f: StrokeFeatures, lineHeight: number) => f.size <= Math.max(0.2 * lineHeight, 4);
+// × strokes are drawn fast and bow slightly; a real one measured 0.84 straightness.
+const isDiagonal = (f: StrokeFeatures) => f.straightness > 0.8 && fromHorizontal(f) >= 20 && fromHorizontal(f) <= 70;
+
+/**
+ * Size thresholds, as fractions of the line's digit height. Measured on real
+ * tablet ink (26–34 px lines): decimal points were 2–7 px (≤ 0.27 H); "÷" dots
+ * were sometimes short dashes up to 11 px (≤ 0.41 H); the shortest real bar
+ * was 13 px (0.38 H) while stray taps were ≤ 2 px.
+ */
+export const DOT_MAX = 0.3;
+export const DIVIDE_MARK_MAX = 0.45;
+export const BAR_MIN = 0.3;
+
+const isDot = (f: StrokeFeatures, lineHeight: number) => f.size <= Math.max(DOT_MAX * lineHeight, 4);
 
 /**
  * Whether two straight strokes would cross if each were extended by
@@ -132,6 +144,25 @@ export function nearlyCross(a: StrokeFeatures, b: StrokeFeatures, extend: number
  */
 export function classifyBracket(f: StrokeFeatures): ShapeGuess | null {
   if (f.h < 1e-6 || f.w > 0.6 * f.h || fromHorizontal(f) < 65) return null;
+  const m = bracketMeasure(f);
+  if (!m) return null;
+  const { bow, oneSided, peak, left, right } = m;
+  // Bow is measured across the stroke's own axis, so a leaning "1" isn't mistaken
+  // for a bracket (a width/height ratio would be: a 13°-leaning "1" is 25% as wide as tall).
+  if (bow < MIN_BRACKET_BOW || bow > 0.45 || !oneSided || peak < 0.25 || peak > 0.75) return null;
+  const confidence = Math.min(0.95, 0.7 + bow);
+  return { symbol: left > right ? '(' : ')', confidence };
+}
+
+/**
+ * Measured on 10 real brackets and 11 real "1"s from tablet recordings: brackets
+ * bow 0.16–0.43; "1"s whose bend is mid-stroke bow ≤ 0.11 (flagged "1"s bow up
+ * to 0.14 but peak at the very top, which the peak test rejects). 0.13 sits in the gap.
+ */
+export const MIN_BRACKET_BOW = 0.13;
+
+/** How a tall single stroke bows away from its top→bottom chord (null if its ends don't span it). */
+export function bracketMeasure(f: StrokeFeatures) {
   const [a, z] = f.pts[0].y <= f.pts[f.pts.length - 1].y ? [f.pts[0], f.pts[f.pts.length - 1]] : [f.pts[f.pts.length - 1], f.pts[0]];
   const dx = z.x - a.x;
   const dy = z.y - a.y;
@@ -151,9 +182,7 @@ export function classifyBracket(f: StrokeFeatures): ShapeGuess | null {
   const oneSided = Math.min(left, right) < 0.35 * Math.max(left, right); // a C-curve, not an S
   // A bracket bows most near its middle; a narrow "7" has its corner at the top.
   const peak = ((left > right ? leftY : rightY) - a.y) / Math.max(dy, 1e-6);
-  if (bow < 0.08 || bow > 0.45 || !oneSided || peak < 0.25 || peak > 0.75) return null;
-  const confidence = Math.min(0.95, 0.7 + bow);
-  return { symbol: left > right ? '(' : ')', confidence };
+  return { bow, oneSided, peak, left, right };
 }
 
 /**
@@ -164,11 +193,22 @@ export function classifyBracket(f: StrokeFeatures): ShapeGuess | null {
 export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight: number): ShapeGuess | null {
   const fs = strokes.filter((s) => s.length > 0).map(strokeFeatures);
   if (fs.length === 0) return null;
+  // Bars must have real length, so a stray tap can never become half of "=" or "+".
+  const minBar = BAR_MIN * lineHeight;
+  const hBar = (f: StrokeFeatures) => isHorizontal(f) && f.w >= minBar;
+  const vBar = (f: StrokeFeatures) => isVertical(f) && f.h >= minBar;
+  const diag = (f: StrokeFeatures) => isDiagonal(f) && f.size >= minBar;
+
+  // Several tiny taps on one spot (a double-tapped decimal point) are one ".".
+  if (fs.length > 1 && fs.every((f) => isDot(f, lineHeight))) {
+    const u = bboxOfPoints(fs.flatMap((f) => f.pts));
+    if (Math.max(bboxWidth(u), bboxHeight(u)) <= 1.3 * Math.max(DOT_MAX * lineHeight, 4)) return { symbol: '.', confidence: 0.85 };
+  }
 
   if (fs.length === 1) {
     const [f] = fs;
     if (isDot(f, lineHeight)) return { symbol: '.', confidence: 0.9 };
-    if (isHorizontal(f)) return { symbol: '−', confidence: 0.9 };
+    if (hBar(f)) return { symbol: '−', confidence: 0.9 };
     // Brackets are checked before "1": both are tall single strokes, a bracket just bows.
     const bracket = classifyBracket(f);
     if (bracket) return bracket;
@@ -181,7 +221,7 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
   if (fs.length === 2) {
     const [a, b] = fs;
     const cross = polylinesIntersect(a.pts, b.pts);
-    if (isHorizontal(a) && isHorizontal(b) && !cross) {
+    if (hBar(a) && hBar(b) && !cross) {
       const gap = Math.abs(a.cy - b.cy);
       if (gap > 0.1 * Math.max(a.w, b.w)) return { symbol: '=', confidence: 0.95 };
     }
@@ -189,10 +229,10 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
     // so a near-miss (crossing once both bars are extended by 30%) also counts.
     const touches = cross || nearlyCross(a, b, 0.3);
     if (touches) {
-      if ((isHorizontal(a) && isVertical(b)) || (isVertical(a) && isHorizontal(b))) {
+      if ((hBar(a) && vBar(b)) || (vBar(a) && hBar(b))) {
         return { symbol: '+', confidence: cross ? 0.92 : 0.85 };
       }
-      if (isDiagonal(a) && isDiagonal(b)) {
+      if (diag(a) && diag(b)) {
         // Opposite slopes: one rising, one falling.
         const slopeA = a.angle < 90;
         const slopeB = b.angle < 90;
@@ -202,13 +242,17 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
     return null;
   }
 
-  if (fs.length === 3) {
-    const line = fs.find(isHorizontal);
-    if (line) {
-      const dots = fs.filter((f) => f !== line && f.size <= Math.max(0.45 * line.w, 0.25 * lineHeight, 6));
-      if (dots.length === 2) {
-        const above = dots.some((d) => d.cy < line.cy);
-        const below = dots.some((d) => d.cy > line.cy);
+  // ÷ : exactly one real bar, and every other stroke a small mark (a dot, a
+  // short dash, or several taps on the same spot), with marks above and below.
+  if (fs.length >= 3) {
+    const bars = fs.filter(hBar);
+    if (bars.length === 1) {
+      const [bar] = bars;
+      const marks = fs.filter((f) => f !== bar);
+      const markMax = Math.max(DIVIDE_MARK_MAX * lineHeight, 6);
+      if (marks.every((m) => m.size <= markMax && m.size < bar.w)) {
+        const above = marks.some((m) => m.cy < bar.cy);
+        const below = marks.some((m) => m.cy > bar.cy);
         if (above && below) return { symbol: '÷', confidence: 0.93 };
       }
     }
