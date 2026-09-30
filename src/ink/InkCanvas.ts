@@ -14,12 +14,22 @@ export interface InkCanvasOptions {
   onResize?: (width: number, height: number, dpr: number) => void;
   /** Called whenever the camera pans or zooms. */
   onView?: (view: View) => void;
+  /**
+   * Tap-to-act targets (e.g. answers). A pen/mouse/finger TAP (no movement)
+   * that starts on a target calls onTap instead of leaving a dot; any real
+   * movement turns it back into a normal stroke, so writing nearby still works.
+   */
+  isTapTarget?: (world: XY) => boolean;
+  onTap?: (world: XY) => void;
 }
 
 /** Eraser sizes are in screen pixels, so they feel the same at any zoom. */
 const STROKE_ERASER_RADIUS = 8;
 const PIXEL_ERASER_RADIUS = 11;
 const MIN_POINT_DISTANCE = 0.75;
+/** A tap moves less than this (screen px) and lasts less than TAP_MAX_MS. */
+const TAP_SLOP = 8;
+const TAP_MAX_MS = 450;
 
 type Mode = 'draw' | 'erase' | 'pan' | 'pinch';
 
@@ -63,6 +73,8 @@ export class InkCanvas {
   private current: InkPoint[] | null = null;
   private eraseStart: readonly Stroke[] | null = null;
   private hover: XY | null = null;
+  /** Screen position/time where a possible tap on a tap target began. */
+  private tapStart: { x: number; y: number; t: number } | null = null;
   private penSeen = false;
   private penDown = false;
   private penUpAt = -Infinity;
@@ -317,6 +329,8 @@ export class InkCanvas {
     if (this.eraseTool === 'pen') {
       this.mode = 'draw';
       this.current = [pt];
+      const s = this.toScreen(e);
+      this.tapStart = this.opts.isTapTarget?.(pt) ? { x: s.x, y: s.y, t: performance.now() } : null;
     } else {
       this.mode = 'erase';
       this.eraseStart = this.strokes;
@@ -339,6 +353,10 @@ export class InkCanvas {
     if (e.pointerId !== this.activePointer) {
       if (this.tool === 'eraser' || this.tool === 'pixel-eraser') this.requestFrame(); // eraser hover cursor
       return;
+    }
+    if (this.tapStart) {
+      const s = this.toScreen(e);
+      if (Math.hypot(s.x - this.tapStart.x, s.y - this.tapStart.y) > TAP_SLOP) this.tapStart = null; // it's a stroke after all
     }
     // Coalesced events recover the full-rate stylus samples the browser batched per frame.
     const samples = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
@@ -395,6 +413,16 @@ export class InkCanvas {
     if (this.releasePointer(e.pointerId)) return;
     if (e.pointerId !== this.activePointer) return;
     this.activePointer = null;
+    const tap = this.tapStart && performance.now() - this.tapStart.t < TAP_MAX_MS ? this.current?.[0] : undefined;
+    this.tapStart = null;
+    if (tap) {
+      // A tap on a target: act on it, and don't leave a dot on the paper.
+      this.current = null;
+      this.mode = null;
+      this.requestFrame();
+      this.opts.onTap?.(tap);
+      return;
+    }
     if (this.current) {
       const pts = this.current;
       this.current = null;
@@ -451,6 +479,7 @@ export class InkCanvas {
     if (this.activePointer === null) return;
     this.activePointer = null;
     this.current = null;
+    this.tapStart = null;
     if (this.eraseStart) {
       // Roll back a half-finished erase.
       this.strokes = this.eraseStart;

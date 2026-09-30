@@ -22,6 +22,10 @@ export class AnswerLayer {
   private raf = 0;
   private dpr = 1;
   private view: View = IDENTITY_VIEW;
+  /** Where each answer was last drawn (world coords), for tap hit-testing. */
+  private rects = new Map<string, { x: number; y: number; w: number; h: number }>();
+  /** Equation currently open in tap-to-correct (drawn with a highlight). */
+  highlighted: string | null = null;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -35,10 +39,29 @@ export class AnswerLayer {
     this.draw();
   }
 
-  /** Answers live in world space like the ink, so they pan and zoom with it. */
+  redraw() {
+    this.draw();
+  }
+
+  /**
+   * Answers live in world space like the ink, so they pan and zoom with it.
+   * Coalesced to one redraw per frame (a trackpad can fire several zoom events per frame).
+   */
   setView(view: View) {
     this.view = view;
-    this.draw();
+    cancelAnimationFrame(this.raf);
+    this.raf = requestAnimationFrame(this.draw);
+  }
+
+  /** The equation whose drawn answer is at world point p (with a finger-friendly margin), if any. */
+  hitTest(p: { x: number; y: number }): EquationResult | null {
+    const pad = 10 / this.view.scale;
+    for (const [key, r] of this.rects) {
+      if (p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad) {
+        return this.answers.get(key)?.eq ?? null;
+      }
+    }
+    return null;
   }
 
   update(equations: EquationResult[]) {
@@ -68,6 +91,7 @@ export class AnswerLayer {
 
     const now = performance.now();
     let animating = false;
+    this.rects.clear();
     for (const { eq, born } of this.answers.values()) {
       const t = Math.min(1, (now - born) / WRITE_MS);
       if (t < 1) animating = true;
@@ -88,6 +112,15 @@ export class AnswerLayer {
     ctx.font = `600 ${size}px ${ANSWER_FONT}, "Segoe Print", "Bradley Hand", cursive`;
     ctx.textBaseline = 'middle';
     const width = ctx.measureText(eq.display).width;
+    this.rects.set(eq.key, { x, y: y - size * 0.5, w: width, h: size });
+
+    if (this.highlighted === eq.key) {
+      // Soft marker behind the answer while it's open for correction.
+      ctx.fillStyle = 'rgba(31, 95, 209, 0.10)';
+      ctx.beginPath();
+      ctx.roundRect(x - 6, y - size * 0.55, width + 12, size * 1.1, 8);
+      ctx.fill();
+    }
 
     // Clip-reveal from the left: the answer looks like it is being written.
     ctx.beginPath();
