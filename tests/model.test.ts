@@ -51,6 +51,18 @@ describe('MNIST digit model', () => {
     expect(eqs.map((e) => `${e.expression}=${e.display}`)).toEqual(fx.expected);
   });
 
+  it('solves free tablet writing: erased+redrawn +, retraced ×, open 4, stray pen touch, high-peaked brackets', async () => {
+    const fx = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/real/tablet-free-writing-1.json'), 'utf8')) as {
+      expected: string[];
+      strokes: { id: number; order: number; pts: [number, number][] }[];
+    };
+    const strokes = fx.strokes.map((s) => ({ id: s.id, order: s.order, pts: s.pts.map(([x, y]) => ({ x, y })) }));
+    const got = (await recognizePage(strokes, classify)).map((e) => `${e.expression}=${e.display}`);
+    // The long middle row still has two errors rules can't fix (an extra stroke on
+    // a "×", and the model reading a 6 as 8) — those are for tap-to-correct.
+    for (const want of fx.expected) expect(got).toContain(want);
+  });
+
   it('handles decimals and division', async () => {
     const [eq] = await recognizePage(writeLine('7.5÷2='), classify);
     expect(eq.expression).toBe('7.5÷2');

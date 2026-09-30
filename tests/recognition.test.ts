@@ -134,6 +134,48 @@ describe('real-handwriting size rules (fixes A–E, from the tablet benchmark)',
   });
 });
 
+describe('free-writing rules (fixes F–K, from a real tablet page)', () => {
+  const seg = (x0: number, y0: number, x1: number, y1: number, n = 10) =>
+    Array.from({ length: n + 1 }, (_, i) => ({ x: x0 + ((x1 - x0) * i) / n, y: y0 + ((y1 - y0) * i) / n }));
+  const st = (id: number, order: number, pts: { x: number; y: number }[]) => ({ id, order, pts });
+
+  it('F: crossing strokes form one symbol even when written far apart in time', () => {
+    const strokes = [
+      st(1, 1, seg(0, 0, 0, 30)), // "1"
+      st(2, 2, seg(20, 15, 40, 15)), // "+" bar
+      st(9, 9, seg(60, 0, 60, 30)), // something written later, further right
+      st(10, 10, seg(30, 5, 30, 25)), // "+" stem, added afterwards
+    ];
+    const [line] = segment(strokes);
+    expect(line.symbols.map((x) => x.strokes.map((q) => q.id).sort((a, b) => a - b))).toEqual([[1], [2, 10], [9]]);
+    expect(classifyOperator(line.symbols[1].strokes.map((q) => q.pts), 30)?.symbol).toBe('+');
+  });
+
+  it('G: a + with a tilted, hooked bar is still +', () => {
+    const bar = [{ x: 0, y: 12 }, { x: 2, y: 11 }, { x: 6, y: 10 }, { x: 10, y: 8.5 }, { x: 11, y: 8 }, { x: 11.5, y: 9 }]; // ~24° with a hook
+    expect(classifyOperator([bar, seg(5, 0, 5.5, 16)], 22)?.symbol).toBe('+');
+  });
+
+  it('I: a × with one leg drawn twice is still ×', () => {
+    expect(classifyOperator([seg(0, 0, 10, 14), seg(12, 0, 0, 18), seg(0, 0, 16, 16)], 22)?.symbol).toBe('×');
+  });
+
+  it('J: an open 4 whose stem just touches the first stroke is one symbol', () => {
+    const corner = [...seg(0, 0, 0, 14, 7), ...seg(0, 14, 10, 12, 5).slice(1)];
+    const strokes = [st(1, 1, corner), st(2, 2, seg(10.5, 4, 10.5, 20)), st(3, 3, seg(30, 0, 30, 20))];
+    const [line] = segment(strokes);
+    expect(line.symbols.map((x) => x.strokes.length)).toEqual([2, 1]);
+  });
+
+  it('K: a stray dot above the digits is ignored; a real decimal point is kept', async () => {
+    const strokes = [...writeLine('6÷2='), st(900, 900, [{ x: 70, y: 16 }, { x: 70.5, y: 16.3 }])]; // tap above the digits
+    const [eq] = await recognizePage(strokes, mockDigits('62'));
+    expect(eq.expression).toBe('6÷2');
+    const [dec] = await recognizePage(writeLine('7.5='), mockDigits('75'));
+    expect(dec.expression).toBe('7.5');
+  });
+});
+
 describe('line height estimate', () => {
   const item = (w: number, h: number, ink: number) => ({
     b: { minX: 0, minY: 0, maxX: w, maxY: h },
