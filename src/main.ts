@@ -5,6 +5,7 @@ import './styles.css';
 import { InkCanvas, type Tool } from './ink/InkCanvas';
 import type { EquationResult, LineReading } from './recognition/pipeline';
 import { ANSWER_FONT, AnswerLayer } from './ui/answers';
+import { CorrectionUI } from './ui/corrections';
 import { playAnswerCue, playEraseCue, setSoundEnabled } from './ui/feedback';
 import type { View } from './ink/viewport';
 import { loadPage, loadView, savePage, saveView } from './ui/storage';
@@ -28,12 +29,15 @@ const net = $('#net');
 let firstResult = true;
 // Created after the canvas (it draws on the canvas' overlay layer).
 let answerLayer: AnswerLayer | undefined;
+// Tap-to-correct (created after the canvas; the canvas calls into it lazily).
+let fixer: CorrectionUI | undefined;
 
 const recognizer = new RecognizerClient(onEquations, onStatus);
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 const ink = new InkCanvas(paper, {
   onChange(strokes, reason) {
+    fixer?.prune(strokes);
     recognizer.schedule(strokes);
     hint.classList.toggle('hidden', strokes.length > 0);
     undoBtn.disabled = !ink.canUndo;
@@ -47,9 +51,16 @@ const ink = new InkCanvas(paper, {
   },
   onView(view) {
     answerLayer?.setView(view);
+    fixer?.reposition();
     syncPaper(view);
     clearTimeout(viewTimer);
     viewTimer = setTimeout(() => saveView(view), 300);
+  },
+  // Tapping an answer opens it for correction.
+  isTapTarget: (p) => !!answerLayer?.hitTest(p),
+  onTap(p) {
+    const eq = answerLayer?.hitTest(p);
+    if (eq) fixer?.open(eq.key);
   },
 });
 let viewTimer: ReturnType<typeof setTimeout> | undefined;
@@ -70,8 +81,22 @@ answerLayer = new AnswerLayer(ink.overlay, (eq) => {
 });
 answerLayer.setDpr(ink.cssSize.dpr);
 
+fixer = new CorrectionUI($('.app'), {
+  getView: () => ink.currentView,
+  getStrokes: () => ink.all,
+  onCorrectionsChanged: () => recognizer.now(ink.all),
+  onActiveChange(key) {
+    if (answerLayer) {
+      answerLayer.highlighted = key;
+      answerLayer.redraw();
+    }
+  },
+});
+recognizer.corrections = () => fixer?.corrections ?? {};
+
 function onEquations(eqs: EquationResult[], lines: LineReading[]) {
   answerLayer?.update(eqs);
+  fixer?.update(eqs);
   firstResult = false;
   renderReadings(eqs, lines);
   if (import.meta.env.DEV) autoCapture(lines);
@@ -218,6 +243,12 @@ function renderReadings(eqs: EquationResult[], lines: LineReading[]) {
       bar.append(fill);
       conf.append(bar, `${pct}% sure`);
       if (eq.result.kind === 'error') conf.append(` · ${eq.result.message}`);
+      const fix = document.createElement('button');
+      fix.className = 'fix';
+      fix.textContent = 'Fix';
+      fix.title = 'Correct a misread symbol';
+      fix.addEventListener('click', () => fixer?.open(eq.key));
+      conf.append(fix);
       li.append(expr, conf);
       return li;
     }),
