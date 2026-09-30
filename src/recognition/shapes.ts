@@ -276,6 +276,11 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
       // hooked bar — as long as it stays thin relative to the other bar, which
       // keeps an open "4" (corner stroke + crossing stem) out.
       if (cross && (looseCross(a, b, minBar) || looseCross(b, a, minBar))) return { symbol: '+', confidence: 0.8 };
+      // Same idea for "×": two legs that really cross, with opposite slopes, may be
+      // slightly curved (a real leg measured 0.79). A stem is never diagonal, so an
+      // open "4" can't pass this.
+      const looseDiag = (f: StrokeFeatures) => f.straightness > 0.7 && fromHorizontal(f) >= 20 && fromHorizontal(f) <= 70 && f.size >= minBar;
+      if (cross && looseDiag(a) && looseDiag(b) && a.angle < 90 !== b.angle < 90) return { symbol: '×', confidence: 0.8 };
       if (diag(a) && diag(b)) {
         // Opposite slopes: one rising, one falling.
         const slopeA = a.angle < 90;
