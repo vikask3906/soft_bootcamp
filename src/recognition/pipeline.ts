@@ -1,5 +1,7 @@
+import { bboxOfPoints, unionBBox } from '../ink/geometry';
 import type { BBox } from '../ink/types';
 import { evaluate, formatResult, type EvalResult } from '../math/evaluate';
+import { deskew, toPage, type RowTransform } from './deskew';
 import { rasterizeStrokes } from './rasterize';
 import { segment, type RecStroke, type SymbolGroup } from './segment';
 import { bracketMeasure, classifyOperator, MIN_BRACKET_BOW, strokeFeatures } from './shapes';
@@ -46,7 +48,8 @@ export interface EquationResult {
   /** Lowest per-symbol confidence — the chain is only as strong as its weakest link. */
   confidence: number;
   /** Where to draw the answer: right edge of "=", vertical centre and height of the line. */
-  anchor: { x: number; y: number; height: number };
+  /** `angle` (radians) is the row's slope, so the answer can follow a slanted row. */
+  anchor: { x: number; y: number; height: number; angle: number };
 }
 
 /** Maps handwriting glyphs to the evaluator's input alphabet. */
@@ -94,7 +97,16 @@ export async function recognizeDetailed(
   readAllLines = false,
   corrections: Corrections = {},
 ): Promise<{ equations: EquationResult[]; lines: LineReading[] }> {
-  const lines = segment(strokes);
+  // Straighten slanted rows first; recognition runs on the upright copy.
+  const { strokes: upright, transforms } = deskew(strokes);
+  const lines = segment(upright);
+  // Page-space boxes for the UI (tap-to-correct labels sit under the real ink).
+  const pageBox = new Map(strokes.filter((s) => s.pts.length).map((s) => [s.id, bboxOfPoints(s.pts)]));
+  const toPageBox = (sym: RecognizedSymbol): RecognizedSymbol => {
+    const ids = sym.key.split(',').map(Number);
+    const boxes = ids.map((id) => pageBox.get(id)).filter((b): b is BBox => !!b);
+    return boxes.length && ids.some((id) => transforms.has(id)) ? { ...sym, bbox: boxes.reduce(unionBBox) } : sym;
+  };
 
   // Pass 1: geometric operators; collect everything else for one batched model call.
   // A symbol the user corrected skips recognition entirely.
@@ -188,11 +200,11 @@ export async function recognizeDetailed(
       results.push({
         key: row[k].rec.key,
         expression: exprSyms.map((s) => s.symbol).join(''),
-        symbols: exprSyms,
+        symbols: exprSyms.map(toPageBox),
         result,
         display: formatResult(result),
         confidence: Math.min(...exprSyms.map((s) => s.confidence), eq.confidence),
-        anchor: { x: eq.bbox.maxX, y: (line.bbox.minY + line.bbox.maxY) / 2, height: line.height },
+        anchor: anchorOnPage(eq, line, transforms.get(Number(eq.key.split(',')[0]))),
       });
     });
   });
@@ -215,6 +227,13 @@ function digitMidline(symbols: SymbolGroup[], lineHeight: number): number | null
     .map((s) => (s.bbox.minY + s.bbox.maxY) / 2)
     .sort((a, b) => a - b);
   return cys.length ? cys[Math.floor(cys.length / 2)] : null;
+}
+
+/** Answer position: right of the "=", on the row's centre line — rotated back onto a slanted row. */
+function anchorOnPage(eq: RecognizedSymbol, line: { bbox: BBox; height: number }, t: RowTransform | undefined) {
+  const p = { x: eq.bbox.maxX, y: (line.bbox.minY + line.bbox.maxY) / 2 };
+  const q = t ? toPage(p, t) : p;
+  return { x: q.x, y: q.y, height: line.height, angle: t?.angle ?? 0 };
 }
 
 const toExpression = (syms: RecognizedSymbol[]) => syms.map((s) => TO_EXPR[s.symbol] ?? s.symbol).join('');
