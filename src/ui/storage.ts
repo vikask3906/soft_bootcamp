@@ -1,6 +1,26 @@
 import type { Stroke } from '../ink/types';
+import { clampScale, type View } from '../ink/viewport';
 
 const KEY = 'calcink.page.v1';
+const VIEW_KEY = 'calcink.view.v1';
+
+export function saveView(view: View) {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(view));
+  } catch {
+    /* best-effort */
+  }
+}
+
+export function loadView(): View | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(VIEW_KEY) ?? 'null') as View | null;
+    if (v && [v.x, v.y, v.scale].every(Number.isFinite)) return { x: v.x, y: v.y, scale: clampScale(v.scale) };
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
 
 /** Autosave of the current page. Browser storage can be unavailable (private mode), so every access is guarded. */
 export function savePage(strokes: readonly Stroke[]) {

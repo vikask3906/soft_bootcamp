@@ -1,3 +1,4 @@
+import { IDENTITY_VIEW, type View } from '../ink/viewport';
 import type { EquationResult } from '../recognition/pipeline';
 
 export const ANSWER_FONT = 'Caveat';
@@ -20,6 +21,7 @@ export class AnswerLayer {
   private ctx: CanvasRenderingContext2D;
   private raf = 0;
   private dpr = 1;
+  private view: View = IDENTITY_VIEW;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -30,6 +32,12 @@ export class AnswerLayer {
 
   setDpr(dpr: number) {
     this.dpr = dpr;
+    this.draw();
+  }
+
+  /** Answers live in world space like the ink, so they pan and zoom with it. */
+  setView(view: View) {
+    this.view = view;
     this.draw();
   }
 
@@ -53,10 +61,10 @@ export class AnswerLayer {
 
   private draw = () => {
     cancelAnimationFrame(this.raf);
-    const { ctx, canvas, dpr } = this;
+    const { ctx, canvas, dpr, view } = this;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.x, dpr * view.y);
 
     const now = performance.now();
     let animating = false;

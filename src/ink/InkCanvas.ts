@@ -1,29 +1,42 @@
 import { eraseStrokesAt, erasePixelsAt, isScratchGesture, strokesHitByScratch } from './erase';
-import { backingStoreSize, clientToCanvas } from './geometry';
+import { backingStoreSize, clientToCanvas, type XY } from './geometry';
 import { History } from './history';
 import { drawStroke } from './render';
 import type { InkPoint, Stroke } from './types';
+import { IDENTITY_VIEW, panBy, pinchView, screenToWorld, zoomAt, type View } from './viewport';
 
-export type Tool = 'pen' | 'eraser' | 'pixel-eraser';
+export type Tool = 'pen' | 'eraser' | 'pixel-eraser' | 'hand';
 
 export interface InkCanvasOptions {
   /** Called after every committed change (draw, erase, undo, …). */
   onChange: (strokes: readonly Stroke[], reason: 'draw' | 'erase' | 'scratch' | 'undo' | 'redo' | 'clear' | 'load') => void;
   /** Called whenever the canvas is resized (CSS px) so overlays can follow. */
   onResize?: (width: number, height: number, dpr: number) => void;
+  /** Called whenever the camera pans or zooms. */
+  onView?: (view: View) => void;
 }
 
+/** Eraser sizes are in screen pixels, so they feel the same at any zoom. */
 const STROKE_ERASER_RADIUS = 8;
 const PIXEL_ERASER_RADIUS = 11;
 const MIN_POINT_DISTANCE = 0.75;
 
+type Mode = 'draw' | 'erase' | 'pan' | 'pinch';
+
 /**
- * Three stacked canvases:
- *   ink     — committed strokes; redrawn fully only on erase/undo/resize,
- *             new strokes are appended incrementally.
+ * Three stacked canvases over an infinite, zoomable page:
+ *   ink     — committed strokes; redrawn fully only on erase/undo/resize/view
+ *             change, new strokes are appended incrementally.
  *   live    — the stroke being drawn plus the eraser cursor; cleared each frame.
  *   overlay — owned by the answer layer.
+ * Strokes are stored in world coordinates; `view` maps them to the screen.
  * All drawing is batched into requestAnimationFrame so input handlers stay tiny.
+ *
+ * Input model:
+ *   pen            draws (eraser end / barrel button erases); palms are ignored
+ *   finger         draws until a pen is seen, then pans; two fingers pan + pinch-zoom
+ *   mouse          left draws, middle-drag / Space-drag / hand tool pans,
+ *                  wheel scrolls, Ctrl+wheel (and trackpad pinch) zooms
  */
 export class InkCanvas {
   readonly ink: HTMLCanvasElement;
@@ -41,12 +54,25 @@ export class InkCanvas {
   penWidth = 3;
   penColor = '#1d2740';
 
+  private view: View = IDENTITY_VIEW;
+
+  // Drawing / erasing (single pointer)
   private activePointer: number | null = null;
-  private activeTool: Tool = 'pen';
+  private mode: Mode | null = null;
+  private eraseTool: Tool = 'eraser';
   private current: InkPoint[] | null = null;
   private eraseStart: readonly Stroke[] | null = null;
-  private hover: { x: number; y: number } | null = null;
-  private lastPenTime = 0;
+  private hover: XY | null = null;
+  private penSeen = false;
+  private penDown = false;
+  private spaceHeld = false;
+
+  // Pan / pinch gesture
+  /** Latest screen position of every finger and every pointer driving a gesture. */
+  private positions = new Map<number, XY>();
+  private fingers = new Set<number>();
+  private gesturePtrs = new Set<number>();
+  private gesture: { view: View; center: XY; spread: number } | null = null;
 
   private dpr = 1;
   private cssW = 0;
@@ -73,7 +99,10 @@ export class InkCanvas {
     host.addEventListener('pointerup', this.onUp);
     host.addEventListener('pointercancel', this.onCancel);
     host.addEventListener('pointerleave', this.onLeave);
+    host.addEventListener('wheel', this.onWheel, { passive: false });
     host.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('keydown', this.onKey);
+    window.addEventListener('keyup', this.onKey);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);
@@ -91,6 +120,13 @@ export class InkCanvas {
   }
   get canRedo() {
     return this.history.canRedo;
+  }
+  get currentView(): View {
+    return this.view;
+  }
+  /** What the user is doing right now (null when idle). */
+  get interaction(): Mode | null {
+    return this.mode;
   }
 
   undo() {
@@ -116,9 +152,28 @@ export class InkCanvas {
     this.setStrokes(strokes, 'load');
   }
 
+  setView(v: View) {
+    if (v.x === this.view.x && v.y === this.view.y && v.scale === this.view.scale) return;
+    this.view = v;
+    this.inkDirty = true;
+    this.requestFrame();
+    this.opts.onView?.(v);
+  }
+
+  /** Zoom by a factor around the centre of the screen (toolbar buttons). */
+  zoomBy(factor: number) {
+    this.setView(zoomAt(this.view, { x: this.cssW / 2, y: this.cssH / 2 }, factor));
+  }
+
+  resetView() {
+    this.setView(IDENTITY_VIEW);
+  }
+
   dispose() {
     this.resizeObserver.disconnect();
     this.dprQuery?.removeEventListener('change', this.onDprChange);
+    window.removeEventListener('keydown', this.onKey);
+    window.removeEventListener('keyup', this.onKey);
   }
 
   // ------------------------------------------------------------------ layout / DPR
@@ -178,35 +233,80 @@ export class InkCanvas {
 
   // ------------------------------------------------------------------ input
 
-  private toPoint(e: PointerEvent): InkPoint {
-    const { x, y } = clientToCanvas(e.clientX, e.clientY, this.rect);
+  private toScreen(e: PointerEvent | WheelEvent): XY {
+    return clientToCanvas(e.clientX, e.clientY, this.rect);
+  }
+
+  private toWorld(e: PointerEvent): InkPoint {
+    const { x, y } = screenToWorld(this.view, this.toScreen(e));
     const p = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5;
     return { x, y, p };
   }
 
+  private onKey = (e: KeyboardEvent) => {
+    if (e.code !== 'Space') return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+    this.spaceHeld = e.type === 'keydown';
+    this.host.classList.toggle('panning', this.spaceHeld || this.tool === 'hand');
+    if (e.type === 'keydown') e.preventDefault();
+  };
+
   private onDown = (e: PointerEvent) => {
+    const r = this.host.getBoundingClientRect();
+    this.rect = { left: r.left, top: r.top };
+
+    if (e.pointerType === 'touch') {
+      // Palm rejection: a hand resting on the screen while the pen writes is ignored.
+      if (this.penDown) return;
+      this.positions.set(e.pointerId, this.toScreen(e));
+      this.fingers.add(e.pointerId);
+      this.capture(e);
+      if (this.fingers.size >= 2) {
+        // Second finger: abandon any finger-drawn stroke and pan/pinch with all fingers.
+        this.abortActive();
+        this.gesturePtrs = new Set(this.fingers);
+        this.startGesture('pinch');
+        return;
+      }
+      if (this.penSeen || this.tool === 'hand') {
+        this.gesturePtrs.add(e.pointerId);
+        this.startGesture('pan');
+        return;
+      }
+      // No stylus on this device: a single finger draws.
+    }
+
     if (this.activePointer !== null) return;
-    if (e.pointerType === 'pen') this.lastPenTime = performance.now();
-    // Palm rejection: ignore touches while a stylus has recently been used.
-    if (e.pointerType === 'touch' && performance.now() - this.lastPenTime < 1500) return;
+    if (e.pointerType === 'pen') {
+      this.penSeen = true;
+      this.penDown = true;
+    }
+
+    const wantsPan = e.button === 1 || this.tool === 'hand' || (e.pointerType === 'mouse' && this.spaceHeld);
+    if (wantsPan) {
+      e.preventDefault();
+      this.positions.set(e.pointerId, this.toScreen(e));
+      this.gesturePtrs.add(e.pointerId);
+      this.capture(e);
+      this.startGesture('pan');
+      return;
+    }
     if (e.button !== 0 && e.button !== 5) return;
     e.preventDefault();
 
-    const r = this.host.getBoundingClientRect();
-    this.rect = { left: r.left, top: r.top };
     this.activePointer = e.pointerId;
-    try {
-      this.host.setPointerCapture(e.pointerId);
-    } catch {
-      /* pointer already gone (or synthetic) — drawing still works without capture */
-    }
+    this.capture(e);
     // Stylus eraser end / barrel button acts as a stroke eraser.
-    this.activeTool = e.button === 5 || (e.buttons & 32) !== 0 ? 'eraser' : this.tool;
+    const erasing = e.button === 5 || (e.buttons & 32) !== 0;
+    this.eraseTool = erasing ? 'eraser' : this.tool;
 
-    const pt = this.toPoint(e);
-    if (this.activeTool === 'pen') {
+    const pt = this.toWorld(e);
+    if (this.eraseTool === 'pen') {
+      this.mode = 'draw';
       this.current = [pt];
     } else {
+      this.mode = 'erase';
       this.eraseStart = this.strokes;
       this.eraseAt(pt);
     }
@@ -215,21 +315,27 @@ export class InkCanvas {
   };
 
   private onMove = (e: PointerEvent) => {
-    if (e.pointerType === 'pen') this.lastPenTime = performance.now();
-    const pt = this.toPoint(e);
+    if (this.positions.has(e.pointerId)) this.positions.set(e.pointerId, this.toScreen(e));
+    if (this.gesturePtrs.has(e.pointerId)) {
+      this.updateGesture();
+      return;
+    }
+
+    const pt = this.toWorld(e);
     this.hover = pt;
     if (e.pointerId !== this.activePointer) {
-      if (this.tool !== 'pen') this.requestFrame(); // eraser hover cursor
+      if (this.tool === 'eraser' || this.tool === 'pixel-eraser') this.requestFrame(); // eraser hover cursor
       return;
     }
     // Coalesced events recover the full-rate stylus samples the browser batched per frame.
     const samples = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
     const events = samples.length ? samples : [e];
+    const minDist = MIN_POINT_DISTANCE / this.view.scale;
     for (const ev of events) {
-      const p = this.toPoint(ev);
+      const p = this.toWorld(ev);
       if (this.current) {
         const last = this.current[this.current.length - 1];
-        if (Math.hypot(p.x - last.x, p.y - last.y) >= MIN_POINT_DISTANCE) this.current.push(p);
+        if (Math.hypot(p.x - last.x, p.y - last.y) >= minDist) this.current.push(p);
       } else {
         this.eraseAt(p);
       }
@@ -237,7 +343,23 @@ export class InkCanvas {
     this.requestFrame();
   };
 
+  /** Forgets a lifted pointer; returns true if it was driving a pan/pinch. */
+  private releasePointer(id: number): boolean {
+    this.positions.delete(id);
+    this.fingers.delete(id);
+    if (!this.gesturePtrs.delete(id)) return false;
+    // Lifting one of two fingers continues as a one-finger pan from here.
+    if (this.gesturePtrs.size > 0) this.startGesture('pan');
+    else {
+      this.gesture = null;
+      this.mode = null;
+    }
+    return true;
+  }
+
   private onUp = (e: PointerEvent) => {
+    if (e.pointerType === 'pen') this.penDown = false;
+    if (this.releasePointer(e.pointerId)) return;
     if (e.pointerId !== this.activePointer) return;
     this.activePointer = null;
     if (this.current) {
@@ -252,12 +374,48 @@ export class InkCanvas {
         this.opts.onChange(this.strokes, 'erase');
       }
     }
+    this.mode = null;
     if (e.pointerType !== 'mouse') this.hover = null;
     this.requestFrame();
   };
 
   private onCancel = (e: PointerEvent) => {
+    if (e.pointerType === 'pen') this.penDown = false;
+    if (this.releasePointer(e.pointerId)) return;
     if (e.pointerId !== this.activePointer) return;
+    this.abortActive();
+  };
+
+  private onLeave = (e: PointerEvent) => {
+    if (e.pointerId === this.activePointer || this.gesturePtrs.has(e.pointerId)) return;
+    this.hover = null;
+    this.requestFrame();
+  };
+
+  private onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const at = this.toScreen(e);
+    // Normalise line/page deltas to pixels.
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.cssH : 1;
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl+wheel, and trackpad pinch (which browsers report as ctrl+wheel).
+      this.setView(zoomAt(this.view, at, Math.exp((-e.deltaY * unit) / 300)));
+    } else {
+      this.setView(panBy(this.view, -e.deltaX * unit, -e.deltaY * unit));
+    }
+  };
+
+  private capture(e: PointerEvent) {
+    try {
+      this.host.setPointerCapture(e.pointerId);
+    } catch {
+      /* pointer already gone (or synthetic) — still works without capture */
+    }
+  }
+
+  /** Cancels the in-progress stroke or erase without committing it. */
+  private abortActive() {
+    if (this.activePointer === null) return;
     this.activePointer = null;
     this.current = null;
     if (this.eraseStart) {
@@ -266,21 +424,41 @@ export class InkCanvas {
       this.eraseStart = null;
       this.inkDirty = true;
     }
+    this.mode = null;
     this.hover = null;
     this.requestFrame();
-  };
+  }
 
-  private onLeave = (e: PointerEvent) => {
-    if (e.pointerId === this.activePointer) return;
-    this.hover = null;
-    this.requestFrame();
-  };
+  private gestureCenter(): { center: XY; spread: number } {
+    const pts = [...this.gesturePtrs].map((id) => this.positions.get(id)).filter((p): p is XY => !!p);
+    if (pts.length === 0) return { center: { x: 0, y: 0 }, spread: 0 };
+    const center = {
+      x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
+      y: pts.reduce((s, p) => s + p.y, 0) / pts.length,
+    };
+    const spread = pts.length >= 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0;
+    return { center, spread };
+  }
+
+  private startGesture(mode: 'pan' | 'pinch') {
+    this.mode = mode;
+    const { center, spread } = this.gestureCenter();
+    this.gesture = { view: this.view, center, spread };
+  }
+
+  private updateGesture() {
+    if (!this.gesture) return;
+    const { center, spread } = this.gestureCenter();
+    const g = this.gesture;
+    this.setView(this.gesturePtrs.size >= 2 ? pinchView(g.view, g.center, g.spread, center, spread) : panBy(g.view, center.x - g.center.x, center.y - g.center.y));
+  }
 
   private eraseAt(p: InkPoint) {
+    const s = this.view.scale;
     const next =
-      this.activeTool === 'pixel-eraser'
-        ? erasePixelsAt(this.strokes, p, PIXEL_ERASER_RADIUS, () => this.nextId++)
-        : eraseStrokesAt(this.strokes, p, STROKE_ERASER_RADIUS);
+      this.eraseTool === 'pixel-eraser'
+        ? erasePixelsAt(this.strokes, p, PIXEL_ERASER_RADIUS / s, () => this.nextId++)
+        : eraseStrokesAt(this.strokes, p, STROKE_ERASER_RADIUS / s);
     if (next !== this.strokes) {
       this.strokes = next;
       this.inkDirty = true;
@@ -314,34 +492,55 @@ export class InkCanvas {
     requestAnimationFrame(this.frame);
   }
 
+  /** Sets a context to draw world coordinates at the current view and DPR. */
+  private applyView(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
+    const d = this.dpr;
+    const { x, y, scale } = this.view;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(d * scale, 0, 0, d * scale, d * x, d * y);
+  }
+
   private frame = () => {
     this.frameRequested = false;
-    const d = this.dpr;
     if (this.inkDirty) {
       this.inkDirty = false;
-      this.inkCtx.setTransform(1, 0, 0, 1, 0, 0);
-      this.inkCtx.clearRect(0, 0, this.ink.width, this.ink.height);
-      this.inkCtx.setTransform(d, 0, 0, d, 0, 0);
-      for (const s of this.strokes) drawStroke(this.inkCtx, s);
+      this.applyView(this.inkCtx, this.ink);
+      const s = this.view.scale;
+      // Skip strokes entirely off screen (cheap culling for big pages).
+      const left = -this.view.x / s;
+      const top = -this.view.y / s;
+      const right = left + this.cssW / s;
+      const bottom = top + this.cssH / s;
+      for (const st of this.strokes) {
+        const p0 = st.points[0];
+        if (st.points.length && !this.maybeVisible(st, left, top, right, bottom, p0)) continue;
+        drawStroke(this.inkCtx, st);
+      }
     }
 
     const ctx = this.liveCtx;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, this.live.width, this.live.height);
-    ctx.setTransform(d, 0, 0, d, 0, 0);
+    this.applyView(ctx, this.live);
     if (this.current) drawStroke(ctx, { points: this.current, width: this.penWidth, color: this.penColor });
-    const erasing = this.activePointer !== null ? this.activeTool !== 'pen' : this.tool !== 'pen';
-    if (this.hover && erasing) {
-      const r = (this.activePointer !== null ? this.activeTool : this.tool) === 'pixel-eraser' ? PIXEL_ERASER_RADIUS : STROKE_ERASER_RADIUS;
+    const tool = this.activePointer !== null ? this.eraseTool : this.tool;
+    if (this.hover && (tool === 'eraser' || tool === 'pixel-eraser')) {
+      const s = this.view.scale;
+      const r = (tool === 'pixel-eraser' ? PIXEL_ERASER_RADIUS : STROKE_ERASER_RADIUS) / s;
       ctx.beginPath();
       ctx.arc(this.hover.x, this.hover.y, r, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(120, 110, 90, 0.10)';
       ctx.fill();
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1 / s;
       ctx.strokeStyle = 'rgba(80, 70, 50, 0.55)';
       ctx.stroke();
     }
   };
+
+  private maybeVisible(st: Stroke, left: number, top: number, right: number, bottom: number, p0: InkPoint) {
+    // Quick reject using the first point and a generous margin (strokes are small).
+    const m = 400;
+    return p0.x > left - m && p0.x < right + m && p0.y > top - m && p0.y < bottom + m ? true : st.points.some((p) => p.x > left && p.x < right && p.y > top && p.y < bottom);
+  }
 
   get cssSize() {
     return { width: this.cssW, height: this.cssH, dpr: this.dpr };
