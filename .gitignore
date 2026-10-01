@@ -7,3 +7,7 @@ coverage/
 .vite/
 .claude/
 debug/
+.env
+.env.*
+*.local
+Thumbs.db
