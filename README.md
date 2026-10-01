@@ -7,7 +7,7 @@ working in airplane mode.
 
 > Inter IIT Bootcamp · IIT Guwahati Tech Board · Software track · Phase 1
 
-**Live demo:** _(deployment link — to be added)_
+**Live demo:** https://vikask3906.github.io/soft_bootcamp/ · [![CI](https://github.com/vikask3906/soft_bootcamp/actions/workflows/ci.yml/badge.svg)](https://github.com/vikask3906/soft_bootcamp/actions/workflows/ci.yml)
 
 ---
 
