@@ -121,9 +121,17 @@ function looseCross(h: StrokeFeatures, v: StrokeFeatures, minBar: number): boole
   // an open "4" corner stroke keeps its height because the corner is mid-stroke.
   const coreH = bboxHeight(bboxOfPoints(trimHooks(h.pts, 0.2)));
   const hOk = h.straightness > 0.7 && fromHorizontal(h) < 30 && h.w > 1.8 * coreH && h.w >= minBar && coreH <= 0.3 * v.h;
-  // A truly straight stem that leans has a wide box from its tilt, not its thickness.
-  const vOk = v.straightness > 0.7 && fromHorizontal(v) > 60 && v.h >= minBar && (v.straightness > 0.85 || v.w <= 0.3 * h.w);
+  // A leaning stem has a wide box from its tilt, not its thickness, so thickness is
+  // measured across the stem's own direction (a real one: 4.4 px box, 1 px spread).
+  const vOk = v.straightness > 0.7 && fromHorizontal(v) > 60 && v.h >= minBar && chordSpread(v) <= 0.3 * h.w;
   return hOk && vOk;
+}
+
+/** Largest distance of a stroke's points from the straight line joining its ends. */
+function chordSpread(f: StrokeFeatures): number {
+  const a = f.pts[0];
+  const z = f.pts[f.pts.length - 1];
+  return Math.sqrt(Math.max(...f.pts.map((p) => distToSegmentSq(p, a, z))));
 }
 
 /**
