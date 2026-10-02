@@ -119,6 +119,17 @@ describe('MNIST digit model', () => {
       expect(got).toEqual(fx.expected);
     });
 
+    it('keeps four close slanted rows apart, incl. two whose centres sit at the same height (real tablet page)', async () => {
+      const fx = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/real/tablet-slanted-3.json'), 'utf8')) as {
+        expected: string[];
+        strokes: { id: number; order: number; pts: [number, number][] }[];
+      };
+      const strokes = fx.strokes.map((s) => ({ id: s.id, order: s.order, pts: s.pts.map(([x, y]) => ({ x, y })) }));
+      const got = (await recognizePage(strokes, classify)).map((e) => `${e.expression}=${e.display}`);
+      for (const want of fx.expected) expect(got).toContain(want);
+      expect(got).toHaveLength(4); // four rows, none merged
+    });
+
     it('a slanted row continued later (after writing elsewhere) stays one row', async () => {
       const row = rot(writeLine('12+34+56=', 20, 300, 45, 1), -28, 20, 322);
       const firstHalf = row.slice(0, 7); // "12+34" …
