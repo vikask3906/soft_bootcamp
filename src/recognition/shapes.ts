@@ -20,7 +20,7 @@ import {
  * digits (see ARCHITECTURE.md §4).
  */
 
-export type ShapeSymbol = '+' | '−' | '×' | '÷' | '=' | '.' | '1' | '(' | ')';
+export type ShapeSymbol = '+' | '−' | '×' | '÷' | '=' | '.' | '1' | '(' | ')' | 'x';
 
 export interface ShapeGuess {
   symbol: ShapeSymbol;
@@ -128,7 +128,7 @@ function looseCross(h: StrokeFeatures, v: StrokeFeatures, minBar: number): boole
 
 /**
  * Removes strokes that retrace another one: nearly parallel (≤ 20°), touching
- * it, and lying along it (every point within 25% of the line height). The
+ * it, and lying along it (every point within 40% of the line height). The
  * longer stroke is kept.
  */
 function dropRetraced(fs: StrokeFeatures[], lineHeight: number): StrokeFeatures[] {
@@ -142,12 +142,51 @@ function dropRetraced(fs: StrokeFeatures[], lineHeight: number): StrokeFeatures[
       if (Math.min(dAngle, 180 - dAngle) > 20) continue;
       const b0 = b.pts[0];
       const b1 = b.pts[b.pts.length - 1];
-      const along = a.pts.every((p) => Math.sqrt(distToSegmentSq(p, b0, b1)) <= Math.max(3, 0.25 * lineHeight));
+      // (A real doubled leg ran parallel and touching but up to 0.36 H off the first one.)
+      const along = a.pts.every((p) => Math.sqrt(distToSegmentSq(p, b0, b1)) <= Math.max(3, 0.4 * lineHeight));
       const touching = a.pts.some((p) => b.pts.some((q) => Math.hypot(p.x - q.x, p.y - q.y) <= Math.max(1.5, 0.08 * lineHeight)));
       if (along && touching) dropped.add(a);
     }
   }
   return dropped.size ? fs.filter((f) => !dropped.has(f)) : fs;
+}
+
+/**
+ * The variable x, written cursively as two curves back to back — ")(" or "ɔc".
+ * Told apart from the multiplication sign (two STRAIGHT crossing lines) by
+ * curvature, and from other two-stroke glyphs by shape:
+ *  - the strokes cross or touch, and together are about one letter in size;
+ *  - neither is a straight bar (rules out 4's stem, 5's cap, 7's bar, + and ×);
+ *  - at least one is clearly curved;
+ *  - they bulge TOWARD each other: the left curve bulges right, the right one
+ *    bulges left. A "0" drawn as two halves bulges outward, so it can't match.
+ */
+export function isCursiveX(a: StrokeFeatures, b: StrokeFeatures, lineHeight: number): boolean {
+  const all = [...a.pts, ...b.pts];
+  const box = bboxOfPoints(all);
+  const w = bboxWidth(box);
+  const h = bboxHeight(box);
+  const size = Math.max(w, h);
+  if (size < 0.35 * lineHeight || size > 1.3 * lineHeight || w < 0.5 * h || w > 2.2 * h) return false;
+  const straightBar = (f: StrokeFeatures) => f.straightness > 0.85 && (fromHorizontal(f) < 25 || fromHorizontal(f) > 65);
+  if (straightBar(a) || straightBar(b) || isFlat(a) || isFlat(b)) return false;
+  if (Math.min(a.straightness, b.straightness) >= 0.8) return false;
+  const touching =
+    polylinesIntersect(a.pts, b.pts) || a.pts.some((p) => b.pts.some((q) => Math.hypot(p.x - q.x, p.y - q.y) <= Math.max(1.5, 0.1 * lineHeight)));
+  if (!touching) return false;
+  const [left, right] = a.cx <= b.cx ? [a, b] : [b, a];
+  const unit = Math.max(h, 1);
+  return bulgeX(left) >= 0.15 * unit && bulgeX(right) <= -0.15 * unit;
+}
+
+/** How far a stroke bulges sideways past the line joining its ends: + right, − left. */
+function bulgeX(f: StrokeFeatures): number {
+  const p0 = f.pts[0];
+  const p1 = f.pts[f.pts.length - 1];
+  const ex = (p0.x + p1.x) / 2;
+  const right = Math.max(...f.pts.map((p) => p.x)) - ex;
+  const left = ex - Math.min(...f.pts.map((p) => p.x));
+  return right > left ? right : -left;
 }
 
 /**
@@ -307,7 +346,6 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
       // One leg may be steep (a real one was 72°) as long as the other is a clear diagonal.
       const xLegs = (looseDiag(a) && looseDiag(b, 78)) || (looseDiag(b) && looseDiag(a, 78));
       if (cross && xLegs && a.angle < 90 !== b.angle < 90) return { symbol: '×', confidence: 0.8 };
-      if (cross && looseDiag(a) && looseDiag(b) && a.angle < 90 !== b.angle < 90) return { symbol: '×', confidence: 0.8 };
       if (diag(a) && diag(b)) {
         // Opposite slopes: one rising, one falling.
         const slopeA = a.angle < 90;
@@ -315,6 +353,7 @@ export function classifyOperator(strokes: readonly (readonly XY[])[], lineHeight
         if (slopeA !== slopeB) return { symbol: '×', confidence: cross ? 0.92 : 0.85 };
       }
     }
+    if (isCursiveX(a, b, lineHeight)) return { symbol: 'x', confidence: 0.75 };
     return null;
   }
 
