@@ -101,19 +101,40 @@ export function deskew(strokes: readonly RecStroke[]): { strokes: RecStroke[]; t
   }
 
   // 2. Robust slope per burst (upright, digit-sized strokes carry the row's direction).
-  for (const burst of bursts) {
+  const robustFit = (burst: Burst) => {
     const pts = burst.boxes.filter((b) => bboxHeight(b) >= 0.4 * unit).map(centre);
-    let fit = fitLine(pts, 2 * unit);
-    if (fit) {
-      const f = fit;
-      const inliers = pts.filter((p) => Math.abs(p.y - (f.slope * p.x + f.intercept)) <= 0.5 * unit);
-      fit = fitLine(inliers, 2 * unit) ?? fit;
+    const fit = fitLine(pts, 2 * unit);
+    if (!fit) return null;
+    const inliers = pts.filter((p) => Math.abs(p.y - (fit.slope * p.x + fit.intercept)) <= 0.5 * unit);
+    return fitLine(inliers, 2 * unit) ?? fit;
+  };
+  for (const burst of bursts) burst.fit = robustFit(burst);
+
+  // 2b. One row written in several bursts (e.g. the opening "(" added last, then the
+  // rest of the line continued later) must be straightened as ONE piece: rotating
+  // two parts of a line about different centres shifts them to different heights.
+  // Merge fitted bursts that lie on each other's line, then refit the merged row.
+  let fitted = bursts.filter((b) => b.fit);
+  for (let merged = true; merged; ) {
+    merged = false;
+    outer: for (let i = 0; i < fitted.length; i++) {
+      for (let j = i + 1; j < fitted.length; j++) {
+        if (!sameRow(fitted[i], fitted[j], unit)) continue;
+        const a = fitted[i];
+        const b = fitted[j];
+        a.strokes.push(...b.strokes);
+        a.boxes.push(...b.boxes);
+        a.fit = robustFit(a) ?? a.fit;
+        fitted.splice(j, 1);
+        bursts.splice(bursts.indexOf(b), 1);
+        merged = true;
+        break outer;
+      }
     }
-    burst.fit = fit;
   }
+  fitted = bursts.filter((b) => b.fit);
 
   // 3. Small / unfitted bursts join the fitted burst whose line they lie on.
-  const fitted = bursts.filter((b) => b.fit);
   for (const burst of bursts) {
     if (burst.fit) continue;
     for (let i = 0; i < burst.strokes.length; i++) {
@@ -147,6 +168,22 @@ export function deskew(strokes: readonly RecStroke[]): { strokes: RecStroke[]; t
     return t ? { ...s, pts: s.pts.map((p) => rotate(p, t, -1)) } : s;
   });
   return { strokes: out, transforms };
+}
+
+/** Two fitted bursts are one row if their slopes agree, each centre lies on the other's line, and they are near along it. */
+function sameRow(a: Burst, b: Burst, unit: number): boolean {
+  const fa = a.fit!;
+  const fb = b.fit!;
+  const da = Math.atan(fa.slope);
+  const db = Math.atan(fb.slope);
+  if (Math.abs(da - db) > (8 * Math.PI) / 180) return false;
+  const off = (f: NonNullable<Burst['fit']>, x: number, y: number) => Math.abs(y - (f.slope * x + f.intercept)) / Math.sqrt(1 + f.slope ** 2);
+  if (off(fa, fb.cx, fb.cy) > 0.8 * unit || off(fb, fa.cx, fa.cy) > 0.8 * unit) return false;
+  const ext = (bu: Burst) => [Math.min(...bu.boxes.map((x) => x.minX)), Math.max(...bu.boxes.map((x) => x.maxX))];
+  const [a0, a1] = ext(a);
+  const [b0, b1] = ext(b);
+  const gap = Math.max(0, a0 - b1, b0 - a1) / Math.cos((da + db) / 2);
+  return gap <= 5 * unit;
 }
 
 function transformOf(b: Burst): RowTransform | null {
