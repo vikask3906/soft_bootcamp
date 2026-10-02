@@ -6,7 +6,7 @@ import { IGNORE, recognizeDetailed, recognizePage, type DigitClassifier } from '
 import { softmaxArgmax } from '../src/recognition/model';
 import { estimateLineHeight, segment } from '../src/recognition/segment';
 import { classifyOperator } from '../src/recognition/shapes';
-import { DIGITS, OPERATORS, writeLine } from './fixtures/glyphs';
+import { DIGITS, GLYPHS, OPERATORS, writeLine } from './fixtures/glyphs';
 
 /**
  * Pure-logic tests with a mock digit classifier, so they run in milliseconds
@@ -355,6 +355,94 @@ describe('safety net: bracket-balance repair', () => {
   });
 });
 
+describe('equations with x: solve, store, use', () => {
+  const run = async (strokes: ReturnType<typeof writeLine>, digits: string) =>
+    (await recognizePage(strokes, mockDigits(digits))).map((e) => `${e.mode}: ${e.expression} → ${e.display}`);
+
+  it('recognises a cursive x and solves 2x+4=10', async () => {
+    expect(await run(writeLine('2x+4=10'), '240')).toEqual(['solve: 2x+4=10 → x = 3']);
+  });
+
+  it('stores x = 10 (shown with a tick) and uses it on a line below', async () => {
+    const strokes = [...writeLine('x=10', 20, 20), ...writeLine('x×3+1=', 20, 140, 60, 100)];
+    expect(await run(strokes, '03')).toEqual(['define: x=10 → ✓', 'evaluate: x×3+1 → 31']);
+  });
+
+  it('a solved equation also stores x for the lines below', async () => {
+    const strokes = [...writeLine('2x+4=10', 20, 20), ...writeLine('x×x=', 20, 140, 60, 100)];
+    expect(await run(strokes, '240')).toEqual(['solve: 2x+4=10 → x = 3', 'evaluate: x×x → 9']);
+  });
+
+  it('uses the nearest definition ABOVE; nothing above means no value', async () => {
+    const strokes = [
+      ...writeLine('x+0=', 20, 20, 60, 1), // above every definition
+      ...writeLine('x=2', 20, 140, 60, 100),
+      ...writeLine('x=5', 20, 260, 60, 200),
+      ...writeLine('x+0=', 20, 380, 60, 300),
+    ];
+    const got = await recognizePage(strokes, mockDigits('02500'));
+    expect(got.map((e) => `${e.mode}: ${e.display}${e.result.kind === 'error' ? ' ' + e.result.message : ''}`)).toEqual([
+      'evaluate: ? x has no value',
+      'define: ✓',
+      'define: ✓',
+      'evaluate: 5',
+    ]);
+  });
+
+  it('reads a straight-line × as x when only that makes the equation valid', async () => {
+    const [eq] = await recognizePage(writeLine('2×+4=10'), mockDigits('240'));
+    expect(`${eq.mode}: ${eq.expression} → ${eq.display}`).toBe('solve: 2x+4=10 → x = 3');
+    expect(eq.symbols[1]).toMatchObject({ symbol: 'x', source: 'repair', recognizedAs: '×' });
+    expect(eq.confidence).toBeLessThan(0.6); // flagged as a guess
+  });
+
+  it('keeps a real × as multiplication, and a wrong answer the user wrote stays theirs', async () => {
+    expect(await run(writeLine('2×3='), '23')).toEqual(['evaluate: 2×3 → 6']);
+    expect(await run(writeLine('4×3=13'), '433')).toEqual([]); // not "solved" as 4·x·3 = 13
+  });
+
+  it('reports no solution / any x / not linear', async () => {
+    const strokes = [...writeLine('x+1=x+2', 20, 20, 60, 1), ...writeLine('2x=x+x', 20, 140, 60, 100), ...writeLine('x×x=4', 20, 260, 60, 200)];
+    const got = await recognizePage(strokes, mockDigits('224'));
+    expect(got.map((e) => `${e.display}${e.result.kind === 'error' ? ' ' + e.result.message : ''}`)).toEqual([
+      'no solution',
+      'any x',
+      '? not linear',
+    ]);
+  });
+
+  it('still leaves an answer the user wrote alone (2+2=4)', async () => {
+    expect(await run(writeLine('2+2=4'), '224')).toEqual([]);
+  });
+
+  it('a straight row with a low-sitting x is not mistaken for a tilted one', async () => {
+    // Written small with wide gaps — once gave a false 8° slope from the "2x" fragment and split the row.
+    const strokes: ReturnType<typeof writeLine> = [];
+    let id = 1;
+    const write = (text: string, x: number, y: number, s: number) => {
+      let c = x;
+      for (const ch of text) {
+        const n = ch === '1' ? 0.5 : 1;
+        for (const poly of GLYPHS[ch]) {
+          strokes.push({ id, order: id, pts: poly.map((p) => ({ x: c + (p.x - (n < 1 ? 25 : 0)) * s, y: y + p.y * s })) });
+          id++;
+        }
+        c += 100 * n * s + 10;
+      }
+    };
+    write('2x+4=10', 90, 30, 0.35);
+    write('x×x=', 90, 100, 0.35);
+    expect(await run(strokes, '240')).toEqual(['solve: 2x+4=10 → x = 3', 'evaluate: x×x → 9']);
+  });
+
+  it('anchors the solution after the right-hand side', async () => {
+    const strokes = writeLine('2x+4=10');
+    const rightEdge = Math.max(...strokes.slice(-2).flatMap((s) => s.pts.map((p) => p.x)));
+    const [eq] = await recognizePage(strokes, mockDigits('240'));
+    expect(eq.anchor.x).toBeCloseTo(rightEdge, 5);
+  });
+});
+
 describe('tap-to-correct (corrections in the pipeline)', () => {
   it('a corrected symbol replaces what was read, and the answer follows', async () => {
     // Model misreads the 3 as a 2: "2.5×2=" → 5. The user fixes it to 3.
@@ -371,7 +459,9 @@ describe('tap-to-correct (corrections in the pipeline)', () => {
   });
 
   it('"ignore this mark" drops a stray tap from the expression', async () => {
-    const strokes = [...writeLine('6÷2='), { id: 900, order: 900, pts: [{ x: 95, y: 49 }, { x: 96, y: 50 }] }];
+    // A visible stray dot at mid-height (big enough not to be auto-ignored as a pen touch).
+    const blob = Array.from({ length: 8 }, (_, i) => ({ x: 95 + 2 * Math.cos(i), y: 49 + 2 * Math.sin(i) }));
+    const strokes = [...writeLine('6÷2='), { id: 900, order: 900, pts: blob }];
     const { lines } = await recognizeDetailed(strokes, mockDigits('62'), true);
     const stray = lines[0].text; // contains an extra "." from the tap
     expect(stray).toContain('.');

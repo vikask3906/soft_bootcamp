@@ -40,7 +40,12 @@ export const OPERATORS: Record<string, Glyph> = {
   ')': [arc(20, 50, 45, 55, -55, 55)],
 };
 
-export const GLYPHS: Record<string, Glyph> = { ...DIGITS, ...OPERATORS };
+/** The variable x, written cursively as two arcs back to back: ")(" (lower-case height). */
+export const LETTERS: Record<string, Glyph> = {
+  x: [arc(20, 70, 30, 30, -90, 90), arc(80, 70, 30, 30, 90, 270)],
+};
+
+export const GLYPHS: Record<string, Glyph> = { ...DIGITS, ...OPERATORS, ...LETTERS };
 
 /**
  * Lays out a string of glyphs left to right, returning recogniser strokes.
