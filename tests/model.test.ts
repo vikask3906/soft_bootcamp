@@ -109,6 +109,25 @@ describe('MNIST digit model', () => {
       expect(got.sort()).toEqual(['2+3=5', '4+5=9']);
     });
 
+    it('a slanted row written in two bursts is straightened as one piece (real tablet page)', async () => {
+      const fx = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/real/tablet-slanted-2.json'), 'utf8')) as {
+        expected: string[];
+        strokes: { id: number; order: number; pts: [number, number][] }[];
+      };
+      const strokes = fx.strokes.map((s) => ({ id: s.id, order: s.order, pts: s.pts.map(([x, y]) => ({ x, y })) }));
+      const got = (await recognizePage(strokes, classify)).map((e) => `${e.expression}=${e.display}`);
+      expect(got).toEqual(fx.expected);
+    });
+
+    it('a slanted row continued later (after writing elsewhere) stays one row', async () => {
+      const row = rot(writeLine('12+34+56=', 20, 300, 45, 1), -28, 20, 322);
+      const firstHalf = row.slice(0, 7); // "12+34" …
+      const rest = row.slice(7).map((s, i) => ({ ...s, id: 300 + i, order: 300 + i })); // …"+56=" written later
+      const other = writeLine('2+2=', 20, 650, 45, 100);
+      const got = (await recognizePage([...firstHalf, ...other, ...rest], classify)).map((e) => `${e.expression}=${e.display}`);
+      expect(got.sort()).toEqual(['12+34+56=102', '2+2=4']);
+    });
+
     it('a symbol added later to an old slanted row joins that row', async () => {
       const row = rot(writeLine('7+5=', 20, 300, 50, 1), -25, 20, 325);
       const eqStrokes = row.slice(-2).map((s, i) => ({ ...s, id: 500 + i, order: 500 + i })); // "=" written last…
