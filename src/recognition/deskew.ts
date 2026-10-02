@@ -10,7 +10,7 @@ import type { RecStroke } from './segment';
  * wrong. Instead strokes are grouped by *when* they were written:
  *
  *  1. Bursts: a stroke continues the previous stroke's burst if it was the
- *     next one written and starts close to it (≤ 1.5 glyph heights away). An
+ *     next one written and starts close to it (≤ 2.5 glyph heights away). An
  *     equation is written as one burst, left to right, whatever its angle.
  *  2. Slope per burst: least-squares line through the stroke centres, refitted
  *     once without outliers (e.g. a bracket or a "÷" dot far from the line).
@@ -75,7 +75,14 @@ function fitLine(pts: XY[], minSpan: number) {
   }
   if (sxx === 0) return null;
   const slope = sxy / sxx;
-  return { slope, intercept: my - slope * mx, cx: mx, cy: my };
+  const intercept = my - slope * mx;
+  // Standard error of the slope: a fragment of a few noisy points (e.g. "2x",
+  // where the lower-case x sits low) can give 8° on a straight row, but that
+  // slope is smaller than its own uncertainty. Such a fit counts as level.
+  const resid = pts.reduce((s, p) => s + (p.y - (slope * p.x + intercept)) ** 2, 0);
+  const se = n > 2 ? Math.sqrt(resid / (n - 2) / sxx) : Infinity;
+  const significant = Math.abs(slope) > 2 * se;
+  return { slope: significant ? slope : 0, intercept: significant ? intercept : my, cx: mx, cy: my };
 }
 
 export function deskew(strokes: readonly RecStroke[]): { strokes: RecStroke[]; transforms: Map<number, RowTransform> } {
@@ -94,7 +101,8 @@ export function deskew(strokes: readonly RecStroke[]): { strokes: RecStroke[]; t
   let prev: RecStroke | null = null;
   for (const s of byOrder) {
     const b = boxes.get(s)!;
-    const continues = cur && prev && boxGap(boxes.get(prev)!, b) <= 1.5 * unit;
+    // (Normal gaps between symbols are 0.5–1.3 glyph heights; a new row starts far away.)
+    const continues = cur && prev && boxGap(boxes.get(prev)!, b) <= 2.5 * unit;
     if (!continues) {
       cur = { strokes: [], boxes: [], fit: null };
       bursts.push(cur);
