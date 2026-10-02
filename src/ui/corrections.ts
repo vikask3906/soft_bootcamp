@@ -11,7 +11,7 @@ import { IGNORE, type Corrections, type EquationResult, type RecognizedSymbol } 
  * correction disappears by itself when its strokes are erased or rewritten.
  */
 const STORE_KEY = 'calcink.corrections.v1';
-const ALL_SYMBOLS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '−', '×', '÷', '(', ')', '.'];
+const ALL_SYMBOLS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '−', '×', '÷', '(', ')', '.', 'x'];
 
 export interface CorrectionUIOptions {
   getView: () => View;

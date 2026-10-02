@@ -3,6 +3,7 @@ import '@fontsource/caveat/latin-600.css';
 import '@fontsource/caveat/latin-700.css';
 import './styles.css';
 import { InkCanvas, type Tool } from './ink/InkCanvas';
+import { formatNumber } from './math/evaluate';
 import type { EquationResult, LineReading } from './recognition/pipeline';
 import { ANSWER_FONT, AnswerLayer } from './ui/answers';
 import { CorrectionUI } from './ui/corrections';
@@ -230,8 +231,9 @@ function renderReadings(eqs: EquationResult[], lines: LineReading[]) {
       expr.className = 'expr';
       const ans = document.createElement('b');
       ans.textContent = eq.display;
-      if (eq.result.kind !== 'ok') ans.className = 'bad';
-      expr.append(`${eq.expression} = `, ans);
+      if (eq.result.kind !== 'ok' && eq.result.kind !== 'identity') ans.className = 'bad';
+      if (eq.mode === 'evaluate') expr.append(`${eq.expression} = `, ans);
+      else expr.append(`${eq.expression}  →  `, ans, eq.mode === 'define' && eq.x !== undefined ? `  (x stored)` : '');
       const conf = document.createElement('div');
       conf.className = 'conf';
       const pct = Math.round(eq.confidence * 100);
@@ -243,6 +245,7 @@ function renderReadings(eqs: EquationResult[], lines: LineReading[]) {
       bar.append(fill);
       conf.append(bar, `${pct}% sure`);
       if (eq.result.kind === 'error') conf.append(` · ${eq.result.message}`);
+      if (eq.mode === 'evaluate' && eq.x !== undefined) conf.append(` · using x = ${formatNumber(eq.x)}`);
       const fix = document.createElement('button');
       fix.className = 'fix';
       fix.textContent = 'Fix';

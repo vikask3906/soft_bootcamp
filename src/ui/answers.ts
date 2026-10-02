@@ -115,7 +115,7 @@ export class AnswerLayer {
     const x = size * 0.28;
     const y = 0;
     const kind = eq.result.kind;
-    const color = kind === 'ok' ? '#1f5fd1' : kind === 'undefined' ? '#b4432f' : '#9a8f7a';
+    const color = kind === 'ok' || kind === 'identity' ? '#1f5fd1' : kind === 'undefined' || kind === 'nosolution' ? '#b4432f' : '#9a8f7a';
 
     ctx.save();
     ctx.translate(eq.anchor.x, eq.anchor.y);

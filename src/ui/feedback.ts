@@ -15,12 +15,13 @@ function ctx() {
   return audio;
 }
 
-/** Soft two-note "pencil tick" for a new answer; a low blip for Undefined/errors. */
-export function playAnswerCue(kind: 'ok' | 'undefined' | 'error') {
+/** Soft two-note "pencil tick" for a new answer; a low blip for Undefined/errors/no solution. */
+export function playAnswerCue(kind: string) {
+  const good = kind === 'ok' || kind === 'identity';
   if (soundEnabled) {
     try {
       const ac = ctx();
-      const notes = kind === 'ok' ? [880, 1320] : [330, 262];
+      const notes = good ? [880, 1320] : [330, 262];
       notes.forEach((freq, i) => {
         const t = ac.currentTime + i * 0.07;
         const osc = ac.createOscillator();
@@ -38,7 +39,7 @@ export function playAnswerCue(kind: 'ok' | 'undefined' | 'error') {
       /* audio unavailable — silently ignore */
     }
   }
-  navigator.vibrate?.(kind === 'ok' ? 8 : [6, 40, 6]);
+  navigator.vibrate?.(good ? 8 : [6, 40, 6]);
 }
 
 export function playEraseCue() {
