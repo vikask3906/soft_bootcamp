@@ -99,7 +99,15 @@ export async function recognizeDetailed(
 ): Promise<{ equations: EquationResult[]; lines: LineReading[] }> {
   // Straighten slanted rows first; recognition runs on the upright copy.
   const { strokes: upright, transforms } = deskew(strokes);
-  const lines = segment(upright);
+  // Each straightened row is segmented on its own (straight writing together):
+  // rows rotated about different centres may overlap in upright space.
+  const groups = new Map<RowTransform | undefined, RecStroke[]>();
+  for (const s of upright) {
+    const t = transforms.get(s.id);
+    if (!groups.has(t)) groups.set(t, []);
+    groups.get(t)!.push(s);
+  }
+  const lines = [...groups.values()].flatMap((g) => segment(g));
   // Page-space boxes for the UI (tap-to-correct labels sit under the real ink).
   const pageBox = new Map(strokes.filter((s) => s.pts.length).map((s) => [s.id, bboxOfPoints(s.pts)]));
   const toPageBox = (sym: RecognizedSymbol): RecognizedSymbol => {
