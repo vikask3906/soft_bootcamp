@@ -140,6 +140,16 @@ describe('MNIST digit model', () => {
       for (const want of fx.expected) expect(got).toContain(want);
     });
 
+    it('solves real handwritten equations and uses the stored x (real tablet page)', async () => {
+      const fx = JSON.parse(readFileSync(resolve(__dirname, 'fixtures/real/tablet-equations-1.json'), 'utf8')) as {
+        expected: string[];
+        strokes: { id: number; order: number; pts: [number, number][] }[];
+      };
+      const strokes = fx.strokes.map((s) => ({ id: s.id, order: s.order, pts: s.pts.map(([x, y]) => ({ x, y })) }));
+      const got = (await recognizePage(strokes, classify)).map((e) => `${e.expression}=${e.display}`);
+      for (const want of fx.expected) expect(got).toContain(want);
+    });
+
     it('a slanted row continued later (after writing elsewhere) stays one row', async () => {
       const row = rot(writeLine('12+34+56=', 20, 300, 45, 1), -28, 20, 322);
       const firstHalf = row.slice(0, 7); // "12+34" …
