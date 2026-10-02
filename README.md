@@ -29,6 +29,15 @@ working in airplane mode.
 - `9 ÷ 0 =` shows **Undefined**; malformed input shows `?` plus a short reason
   (`? missing )`, `? two operators`, …) and never crashes
 
+**Equations & variable memory** (creative extension)
+
+- Write `2x + 4 = 10` and the solution `x = 3` appears next to it — any linear equation in x,
+  with x on either side or both (`3(x − 1) = 2x + 5`), plus "no solution" / "any x"
+- `x = 10` stores a value (shown with a ✓); a line below such as `x × 3 + 1 =` uses it (→ 31).
+  A solved equation stores its x too; each line uses the nearest definition above it
+- A cursive x (two curves, `)(`) is told apart from the multiplication sign `×` (two straight
+  lines); an x written as `×` is still understood where multiplication makes no sense (`2×+4=10`)
+
 **On the paper**
 
 - The answer "writes itself" next to the `=`, and re-evaluates live as you edit
@@ -74,7 +83,7 @@ or `localhost`, so test airplane mode on the deployed site or with `npm run prev
 | `npm run dev:lan`   | Dev server reachable from other devices on the network                    |
 | `npm run build`     | Type-check + production build into `dist/` (with offline service worker)  |
 | `npm run preview`   | Serve the production build locally                                        |
-| `npm test`          | Run all automated tests (183)                                             |
+| `npm test`          | Run all automated tests (214)                                             |
 | `npm run bench`     | Handwriting benchmark on real tablet recordings, with a per-symbol report |
 | `npm run typecheck` | TypeScript only                                                           |
 | `npm run format`    | Prettier                                                                  |
@@ -124,14 +133,13 @@ Measured with `npm run bench` on real stylus recordings from an Android tablet
 | Sheet 2 (16 fresh equations, written freely)       | 152 / 153 (99 %) | 15 / 16         |
 
 The remaining errors are two digit misreads by the model (`3→2`, `5→4`) and a one-stroke cursive
-`×`; tap-to-correct fixes each in two taps. Five more real pages (free writing with erasing,
-retracing, stray pen touches, nested brackets and a line written uphill at ~26°) are regression
-tests in `tests/fixtures/real/`.
+`×`; tap-to-correct fixes each in two taps. Eight more real pages (free writing with erasing, retracing, stray pen touches, nested brackets,
+slanted rows and a cursive x) are regression tests in `tests/fixtures/real/`.
 The benchmark fails the test run if accuracy on either sheet drops below 98 %.
 
 ## Tests
 
-`npm test` runs 183 tests (Vitest, in Node — no browser needed):
+`npm test` runs 214 tests (Vitest, in Node — no browser needed):
 
 - **Parser** — BODMAS, associativity, decimals, negatives, brackets, implicit ×, every error reason,
   division by zero, overflow, float formatting (`0.1 + 0.2 → 0.3`)
@@ -140,7 +148,7 @@ The benchmark fails the test run if accuracy on either sheet drops below 98 %.
 - **Ink** — undo/redo, stroke and pixel erasers, scratch-out detection
 - **Recognition** — every operator rule, stroke grouping, rasterisation into the model's input,
   corrections, bracket repair
-- **Real model on real handwriting** — the ONNX model on all digits, on seven real tablet recordings (incl. a slanted line), and on rows from −30° to +30°
+- **Real model on real handwriting** — the ONNX model on all digits, on ten real tablet recordings (incl. slanted lines and a cursive x), and on rows from −30° to +30°
 
 ## Project structure
 
@@ -173,7 +181,10 @@ handwriting benchmark) and a production build on every push and pull request.
 
 ## Known limitations
 
-- **Vocabulary:** no fractions written vertically, exponents, roots or variables.
+- **Vocabulary:** one variable (`x`), linear equations only; no fractions written vertically,
+  exponents or roots.
+- **Joined-up digits:** two digits written in one stroke without lifting the pen (e.g. `27`) are
+  read as one symbol — lift the pen between digits.
 - **Digit model:** MNIST was trained on neat, centred digits; unusual shapes can be misread
   (tap-to-correct covers this).
 - **Developer tools:** `npm run dev` adds a "Send this page to laptop" button that saves strokes

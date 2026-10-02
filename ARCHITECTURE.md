@@ -169,16 +169,17 @@ Strokes, sorted left to right, are merged into one symbol when any of these hold
 
 ### ④a Operators: geometric rules (`shapes.ts: classifyOperator`)
 
-| Symbol  | Rule (sizes relative to line height _H_)                                                                                                                                          |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.`     | one stroke, size ≤ 0.3 _H_ (and not above the digits — stray touches there are ignored)                                                                                           |
-| `−`     | one horizontal bar ≥ 0.3 _H_ long; also two flat strokes on top of each other (retraced)                                                                                          |
-| `=`     | two horizontal bars, not crossing, vertically separated                                                                                                                           |
-| `+`     | a horizontal and a vertical bar that cross or nearly cross; if they truly cross, a tilted or hooked bar is accepted as long as it stays thin                                      |
-| `×`     | two diagonal bars with opposite slopes that cross (one leg may be steep or slightly curved)                                                                                       |
-| `÷`     | exactly one bar plus small marks both above and below it                                                                                                                          |
-| `(` `)` | one tall stroke that is a **smooth arc** (straightness ≥ 0.65), bows 0.13–0.6 of its length to one side, with its widest point in the middle 70 %; bowing left → `(`, right → `)` |
-| `1`     | one straight, near-vertical stroke taller than half a line                                                                                                                        |
+| Symbol  | Rule (sizes relative to line height _H_)                                                                                                                                                                                                                                                         |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.`     | one stroke, size ≤ 0.3 _H_ (and not above the digits — stray touches there are ignored)                                                                                                                                                                                                          |
+| `−`     | one horizontal bar ≥ 0.3 _H_ long; also two flat strokes on top of each other (retraced)                                                                                                                                                                                                         |
+| `=`     | two horizontal bars, not crossing, vertically separated                                                                                                                                                                                                                                          |
+| `+`     | a horizontal and a vertical bar that cross or nearly cross; if they truly cross, a tilted or hooked bar is accepted as long as it stays thin                                                                                                                                                     |
+| `×`     | two diagonal bars with opposite slopes that cross (one leg may be steep or slightly curved)                                                                                                                                                                                                      |
+| `÷`     | exactly one bar plus small marks both above and below it                                                                                                                                                                                                                                         |
+| `(` `)` | one tall stroke that is a **smooth arc** (straightness ≥ 0.65), bows 0.13–0.6 of its length to one side, with its widest point in the middle 70 %; bowing left → `(`, right → `)`                                                                                                                |
+| `x`     | two curves back to back (`)(`): they touch or cross, are about one letter in size, neither is a straight bar, at least one is clearly curved, and they bulge **toward** each other (a `0` drawn in two halves bulges outward) — tested against 209 real two-stroke symbols with no false matches |
+| `1`     | one straight, near-vertical stroke taller than half a line                                                                                                                                                                                                                                       |
 
 Each threshold was set from measurements of real tablet strokes (see §10). For example, on
 29 real brackets the bow was 0.16–0.43 and straightness ≥ 0.71, while real `1`s bowed ≤ 0.11 —
@@ -302,6 +303,40 @@ expr: 27 − term
 - **Floating point:** results are rounded to 12 significant digits, so `0.1 + 0.2` shows `0.3`;
   `−0` shows `0`; very large or small magnitudes use exponent form; negatives use a typographic `−`.
 
+### Variables and linear equations
+
+Every value in the parser is a **linear form** `a·x + b` instead of a plain number (plain
+arithmetic is just `a = 0`):
+
+| Operation                 | Rule                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| `(a₁x + b₁) ± (a₂x + b₂)` | `(a₁ ± a₂)x + (b₁ ± b₂)`                                                           |
+| `(a₁x + b₁) × (a₂x + b₂)` | allowed only if one factor is a constant (`a₁ = 0` or `a₂ = 0`), else "not linear" |
+| `(a₁x + b₁) ÷ (0x + b₂)`  | `(a₁/b₂)x + b₁/b₂`; dividing **by** an expression in x is "not linear"             |
+
+**Solving** `left = right`: both sides become `a₁x + b₁` and `a₂x + b₂`, so
+
+$$x = \frac{b_2 - b_1}{a_1 - a_2}$$
+
+If `a₁ = a₂` there is **no solution** (`x + 1 = x + 2`) or **every x** works (`2x = x + x`).
+Implicit multiplication extends to x: `2x`, `3(x − 1)`, `x(x + 1)` (the last is rejected as not
+linear when solving).
+
+**How a line is interpreted** (`pipeline.ts`): each `=` has a left side and an optional right
+side — ink written close after it.
+
+| Written                                          | Mode                       | Shown                    |
+| ------------------------------------------------ | -------------------------- | ------------------------ |
+| `18 + 4 × 3 =` (nothing after `=`)               | evaluate                   | `30`                     |
+| `2x + 4 = 10` (x somewhere, something after `=`) | solve                      | `x = 3`, and x is stored |
+| `x = 10`                                         | define                     | `✓`, and x is stored     |
+| `x × 3 + 1 =`                                    | evaluate with the stored x | `31`                     |
+| `2 + 2 = 4` (no x, answer written by the user)   | —                          | left alone               |
+
+A line uses the **nearest definition above it** on the page, so a page can redefine x as it goes.
+Without one, the paper shows `? x has no value`. Once x is a number, anything works — `x × x` is
+just `9` when `x = 3`.
+
 ---
 
 ## 6. When recognition is wrong: confidence, repair, correction
@@ -311,6 +346,11 @@ No recogniser is perfect, so the app makes errors **visible** and **cheap to fix
 - **Confidence.** An equation's confidence is its weakest symbol's (softmax probability for
   digits, a fixed rule confidence for operators). Below 0.6 the answer gets a dashed amber
   underline.
+- **x written as `×`.** A variable x drawn with two straight lines is indistinguishable from the
+  multiplication sign, so a `×` is reconsidered as x only where multiplication makes no sense on
+  paper — at the start or end, or next to an operator, `(`, `)` or `=` (`2×+4=10`, `×−3=`). A `×`
+  between two values (`4×3=13`) is always multiplication, so a wrong answer the user wrote is not
+  "solved". The change must make the whole equation valid and is marked as a guess.
 - **Bracket-balance repair.** If an expression fails _and_ its brackets don't balance, the
   likeliest misread is a `(`/`)` read as `1` or vice versa. Candidates are only strokes near the
   bracket/`1` boundary (by their measured bow), a `1` may only become the bracket it bends
@@ -417,8 +457,8 @@ line-height estimate. Several regressions were caught **only** because earlier r
 tests — for example, loosening the bracket rule briefly turned a real `5` into `)`, which led to
 the smooth-arc requirement.
 
-The test suite (183 tests) runs the parser, geometry, ink, recognition rules, the real ONNX model
-on seven real tablet recordings, and the benchmark, which fails if either sheet drops below 98 %.
+The test suite (214 tests) runs the parser, geometry, ink, recognition rules, the real ONNX model
+on ten real tablet recordings, and the benchmark, which fails if either sheet drops below 98 %.
 
 ---
 
@@ -428,6 +468,8 @@ on seven real tablet recordings, and the benchmark, which fails if either sheet 
   rows that curve strongly, or rows written out of order with no nearby ink, may still split.
 - **Model upgrade.** Evaluate a pre-trained math-symbol classifier (option B) on the same
   benchmark and adopt it where it measurably beats the rules.
-- **Vocabulary.** Vertical fractions, exponents, roots and variables (e.g. `x = 10`) are not
-  supported.
+- **Vocabulary.** One variable (`x`) and linear equations only; vertical fractions, exponents and
+  roots are not supported.
+- **Joined-up digits.** Two digits written in one stroke (e.g. `27` without lifting the pen) form
+  one symbol. Splitting connected handwriting is a separate problem not attempted here.
 - **One-stroke cursive `×`** and unusual digit shapes rely on tap-to-correct.
