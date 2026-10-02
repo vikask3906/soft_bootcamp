@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { evaluate, formatNumber, formatResult, tokenize } from '../src/math/evaluate';
+import { evaluate, formatNumber, formatResult, solveLinear, tokenize } from '../src/math/evaluate';
+
+/** Token values for compact assertions (the variable shows as 'x'). */
+const vals = (s: string) => tokenize(s).map((t) => ('value' in t ? t.value : 'x'));
 
 const value = (s: string) => {
   const r = evaluate(s);
@@ -9,17 +12,58 @@ const value = (s: string) => {
 
 describe('tokenize', () => {
   it('splits numbers and operators', () => {
-    expect(tokenize('18+4×3').map((t) => t.value)).toEqual([18, '+', 4, '*', 3]);
+    expect(vals('18+4×3')).toEqual([18, '+', 4, '*', 3]);
   });
   it('maps handwriting glyphs to operators', () => {
-    expect(tokenize('6÷2−1').map((t) => t.value)).toEqual([6, '/', 2, '-', 1]);
+    expect(vals('6÷2−1')).toEqual([6, '/', 2, '-', 1]);
   });
   it('reads multi-digit and decimal numbers', () => {
-    expect(tokenize('123.45').map((t) => t.value)).toEqual([123.45]);
-    expect(tokenize('.5').map((t) => t.value)).toEqual([0.5]);
+    expect(vals('123.45')).toEqual([123.45]);
+    expect(vals('.5')).toEqual([0.5]);
   });
   it('rejects numbers with two decimal points', () => {
     expect(() => tokenize('1.2.3')).toThrow();
+  });
+  it('reads x as the variable and inserts implicit ×', () => {
+    expect(vals('2x+4')).toEqual([2, '*', 'x', '+', 4]);
+    expect(vals('3(x−1)')).toEqual([3, '*', '(', 'x', '-', 1, ')']);
+  });
+});
+
+describe('variables and linear equations', () => {
+  const solve = (l: string, r: string) => {
+    const res = solveLinear(l, r);
+    return res.kind === 'ok' ? formatNumber(res.value) : res.kind === 'error' ? `error:${res.code}` : res.kind;
+  };
+  it.each([
+    ['2x+4', '10', '3'],
+    ['x', '10', '10'],
+    ['10', 'x', '10'],
+    ['3(x−1)', '2x+5', '8'],
+    ['x÷4', '2.5', '10'],
+    ['−x', '7', '-7'],
+    ['0.5x+0.25', '1', '1.5'],
+    ['2(x+3)', '4(x−1)', '5'],
+    ['x+1', 'x+2', 'nosolution'],
+    ['2x', 'x+x', 'identity'],
+    ['x×x', '4', 'error:not-linear'],
+    ['10÷x', '2', 'error:not-linear'],
+    ['2x+', '10', 'error:trailing-operator'],
+  ])('%s = %s  →  x = %s', (l, r, want) => {
+    expect(solve(l, r)).toBe(want);
+  });
+  it('evaluates with a stored value of x (anything goes once x is a number)', () => {
+    expect(evaluate('x×3+1', 10)).toEqual({ kind: 'ok', value: 31 });
+    expect(evaluate('x×x', 3)).toEqual({ kind: 'ok', value: 9 });
+    expect(evaluate('10÷x', 4)).toEqual({ kind: 'ok', value: 2.5 });
+  });
+  it('reports a missing value of x, but syntax errors first', () => {
+    expect(evaluate('x×3')).toMatchObject({ kind: 'error', code: 'unknown-variable', message: 'x has no value' });
+    expect(evaluate('x×')).toMatchObject({ kind: 'error', code: 'trailing-operator' });
+  });
+  it('formats solve outcomes', () => {
+    expect(formatResult({ kind: 'nosolution' })).toBe('no solution');
+    expect(formatResult({ kind: 'identity' })).toBe('any x');
   });
 });
 
