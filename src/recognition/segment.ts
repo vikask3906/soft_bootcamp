@@ -304,7 +304,14 @@ function buildLine(items: Item[], lineHeight: number): Line {
       const h = bboxHeight(d.b);
       if (h < 0.5 * lineHeight) return false;
       const ov = rangeOverlap(d.b.minX, d.b.maxX, bb.minX, bb.maxX);
-      return ov >= 0.4 * barW && cy(bb) <= d.b.minY + 0.35 * h && cy(bb) >= d.b.minY - 0.25 * lineHeight;
+      const atTop = cy(bb) <= d.b.minY + 0.35 * h && cy(bb) >= d.b.minY - 0.25 * lineHeight;
+      if (!atTop) return false;
+      if (ov >= 0.4 * barW) return true;
+      // A long cap that sticks out to the side: accept it when it was drawn right
+      // after the digit and touches it (a real "5" cap measured only 26% overlap).
+      const capStroke = bar.items[0];
+      const last = d.items.reduce((p, q) => (p.s.order > q.s.order ? p : q));
+      return ov > 0 && capStroke.s.order === last.s.order + 1 && polylineGap(last.s.pts, capStroke.s.pts) <= Math.max(1.5, 0.1 * lineHeight);
     });
     if (host) {
       host.items.push(bar.items[0]);
