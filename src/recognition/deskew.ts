@@ -30,8 +30,12 @@ export interface RowTransform {
   cy: number;
 }
 
-/** Below this the row is treated as straight (no rotation at all). */
-const MIN_ANGLE = (3 * Math.PI) / 180;
+/**
+ * Below this the row is treated as straight (no rotation at all). Straight-row
+ * recognition already copes with up to ~10°, and a few degrees are within normal
+ * handwriting wobble — rotating for them only risks a wrong angle.
+ */
+const MIN_ANGLE = (5 * Math.PI) / 180;
 /** Beyond this it's not a slanted row but something else (a column, a scribble). */
 const MAX_ANGLE = (45 * Math.PI) / 180;
 
@@ -134,35 +138,66 @@ export function deskew(strokes: readonly RecStroke[]): { strokes: RecStroke[]; t
   }
   fitted = bursts.filter((b) => b.fit);
 
-  // 3. Small / unfitted bursts join the fitted burst whose line they lie on.
-  for (const burst of bursts) {
-    if (burst.fit) continue;
-    for (let i = 0; i < burst.strokes.length; i++) {
-      const c = centre(burst.boxes[i]);
-      let best: Burst | null = null;
-      let bestD = Infinity;
-      for (const f of fitted) {
-        const { slope, intercept } = f.fit!;
-        const xs = f.boxes.flatMap((b) => [b.minX, b.maxX]);
-        if (c.x < Math.min(...xs) - 2 * unit || c.x > Math.max(...xs) + 2 * unit) continue;
-        const d = Math.abs(c.y - (slope * c.x + intercept)) / Math.sqrt(1 + slope * slope);
-        if (d < bestD) {
-          bestD = d;
-          best = f;
-        }
-      }
-      if (best && bestD <= 0.6 * unit) {
-        const t = transformOf(best);
-        if (t) transforms.set(burst.strokes[i].id, t);
+
+  // 3. Small / unfitted bursts (a symbol redrawn, a "=" rewritten, dots added
+  // later) join the row whose line they lie on — as a WHOLE, judged by their
+  // centre, so a piece is never split between rows. Strokes of a piece that
+  // doesn't fit any row as a whole are tried one by one.
+  const nearestRow = (c: XY, maxD: number): Burst | null => {
+    let best: Burst | null = null;
+    let bestD = Infinity;
+    for (const f of fitted) {
+      const { slope, intercept } = f.fit!;
+      const xs = f.boxes.flatMap((b) => [b.minX, b.maxX]);
+      if (c.x < Math.min(...xs) - 2 * unit || c.x > Math.max(...xs) + 2 * unit) continue;
+      const d = Math.abs(c.y - (slope * c.x + intercept)) / Math.sqrt(1 + slope * slope);
+      if (d < bestD) {
+        bestD = d;
+        best = f;
       }
     }
+    return bestD <= maxD ? best : null;
+  };
+  // A piece that joins a row becomes part of it (extending the row), so a later
+  // piece further along — e.g. a rewritten "=" after a redrawn "÷4" — can join too.
+  // Repeat until nothing more joins. The row's angle stays as fitted.
+  const join = (row: Burst, strokesOf: RecStroke[], boxesOf: BBox[]) => {
+    row.strokes.push(...strokesOf);
+    row.boxes.push(...boxesOf);
+  };
+  let pending = bursts.filter((b) => !b.fit);
+  for (let changed = true; changed && pending.length; ) {
+    changed = false;
+    for (const burst of [...pending]) {
+      const cs = burst.boxes.map(centre);
+      const mid = { x: cs.reduce((a, c) => a + c.x, 0) / cs.length, y: cs.reduce((a, c) => a + c.y, 0) / cs.length };
+      const row = nearestRow(mid, 0.9 * unit);
+      if (!row) continue;
+      join(row, burst.strokes, burst.boxes);
+      pending = pending.filter((b) => b !== burst);
+      changed = true;
+    }
   }
+  // Whatever is left is tried stroke by stroke.
+  for (const burst of pending) {
+    burst.strokes.forEach((st, i) => {
+      const r = nearestRow(centre(burst.boxes[i]), 0.6 * unit);
+      if (r) join(r, [st], [burst.boxes[i]]);
+    });
+  }
+
+  // 3b. Re-measure each row's slope from ALL its strokes now that pieces have joined:
+  // a fragment alone (e.g. the right half of a row, with one digit written low) can
+  // give a false tilt — even in the wrong direction. One transform object per row.
   for (const f of fitted) {
+    f.fit = robustFit(f) ?? f.fit;
     const t = transformOf(f);
     if (t) for (const s of f.strokes) transforms.set(s.id, t);
   }
 
-  // 4. Rotate each stroke upright with its row's transform.
+  // 4. Rotate each stroke upright with its row's transform. Each straightened
+  // row is recognised on its own: rows rotated about different centres can land
+  // at the same height in upright space, so they must never be segmented together.
   const out = strokes.map((s) => {
     const t = transforms.get(s.id);
     return t ? { ...s, pts: s.pts.map((p) => rotate(p, t, -1)) } : s;
